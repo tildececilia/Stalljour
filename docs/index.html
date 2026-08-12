@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stalljour</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>try{if(localStorage.getItem("stalljour.theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+</head>
+<body>
+<header class="app">
+  <div class="logo"><span class="ico">🐴</span> Stalljour</div>
+  <div class="spacer"></div>
+  <div class="menuwrap">
+    <button class="btn sm" id="btnSchedule" style="display:none"><span class="ico">📅</span> Schema</button>
+    <div class="menu" id="scheduleMenu"></div>
+  </div>
+  <button class="btn sm" id="btnSettings" style="display:none"><span class="ico">⚙</span> Inställningar</button>
+  <div class="menuwrap">
+    <button class="btn sm" id="btnProfile" style="display:none"><span class="ico">👤</span> Profil</button>
+    <div class="menu" id="profileMenu"></div>
+  </div>
+  <button class="btn ghost sm" id="btnTheme" title="Byt mellan ljust och mörkt läge"><span class="ico">🌙</span></button>
+</header>
+<div class="wrap"><div id="app"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
