@@ -81,6 +81,13 @@ input:focus,select:focus{border-color:var(--accent)}
 .tleaf{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:.9rem;border-radius:8px}
 .tleaf.tmuted{color:var(--muted);font-size:.85rem}
 .tbtns{margin-left:auto;display:flex;gap:2px;align-items:center}
+.tbtns .x{
+  border:none;background:transparent;cursor:pointer;padding:0;
+  width:30px;height:30px;display:flex;align-items:center;justify-content:center;
+  font-size:1.25rem;line-height:1;color:var(--ink);border-radius:8px;
+}
+.tbtns .x:hover{background:var(--accent-soft)}
+.tbtns .x[title="Ta bort"]:hover{color:var(--danger)}
 .meta2{font-weight:500;color:var(--muted);font-size:.8rem}
 .lvl1{margin-left:16px}
 .lvl2{margin-left:32px}
