@@ -190,7 +190,7 @@ async function renderStable(stableId){
   stStableId = stableId;
   appEl.innerHTML = `
     <button class="backlink" id="back">‹ Mina stall</button>
-    <div class="card"><div id="stableHead"><h1 class="title">Laddar…</h1></div></div>
+    <div class="card schedtop"><div id="stableHead"><h1 class="title">Laddar…</h1></div></div>
     <div class="card" id="stTreeCard"><div class="empty">Laddar…</div></div>`;
   el("back").onclick = ()=>{ view={name:"home",stableId:null}; render(); };
 
