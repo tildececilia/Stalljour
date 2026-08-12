@@ -180,6 +180,10 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 .center{min-height:70vh;display:flex;flex-direction:column;justify-content:center}
 .hint{font-size:.82rem;color:var(--muted);margin-top:8px}
 
+/* Schemats rubrik */
+.schedeyebrow{font-size:.7rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.schedname{font-family:var(--font-head);font-weight:700;font-size:1.7rem;letter-spacing:-.01em;line-height:1.1;margin:2px 0 12px}
+
 /* Mobil: ikon-knappar i headern så allt får plats */
 @media (max-width:640px){
   header.app{gap:6px;padding:10px 12px}

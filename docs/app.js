@@ -464,7 +464,8 @@ function drawScheduleShell(){
     `<div class="hint">Du har ingen egen profil i det här stallet, så du kan se schemat men inte boka. Be admin lägga in din mejl på en profil.</div>`;
   el("schShell").innerHTML = `
     <div class="card">
-      <h1 class="title" style="margin:0 0 10px">${esc(schedCtx.stable.name)} – schema</h1>
+      <div class="schedeyebrow">Schema</div>
+      <h1 class="schedname">${esc(schedCtx.stable.name)}</h1>
       <div id="weeknav"></div>
       ${hint}
     </div>
