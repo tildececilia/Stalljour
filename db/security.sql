@@ -128,9 +128,9 @@ create policy prof_delete on profile for delete using ( is_stable_admin(stable_i
 create policy pm_select on profile_member for select
   using ( email = my_email() or is_stable_member(profile_stable(profile_id)) );
 create policy pm_insert on profile_member for insert
-  with check ( is_stable_admin(profile_stable(profile_id)) );
+  with check ( is_stable_admin(profile_stable(profile_id)) or is_profile_member(profile_id) );
 create policy pm_delete on profile_member for delete
-  using ( is_stable_admin(profile_stable(profile_id)) );
+  using ( is_stable_admin(profile_stable(profile_id)) or is_profile_member(profile_id) );
 
 -- ---------- HÄSTAR (medlem får hantera sina egna profilers hästar) ----------
 create policy horse_select on horse for select

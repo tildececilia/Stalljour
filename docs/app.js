@@ -214,13 +214,17 @@ async function reloadStableData(){
 }
 
 function caret(k){ return `<span class="caret">${stOpen[k]?"▾":"▸"}</span>`; }
-function tbtns(kind, id){
-  if(!curAdmin) return "";
-  return `<span class="tbtns"><button class="x" data-e="${kind}:${id}" title="Ändra">✎</button><button class="x" data-d="${kind}:${id}" title="Ta bort">✕</button></span>`;
+function isMyProfile(p){ return (p.profile_member||[]).some(m=> m.email && m.email.toLowerCase() === session.email); }
+function tbtns(kind, id, canEdit, canDel){
+  if(canEdit === undefined) canEdit = curAdmin;
+  if(canDel === undefined) canDel = canEdit;
+  if(!canEdit && !canDel) return "";
+  return `<span class="tbtns">${canEdit?`<button class="x" data-e="${kind}:${id}" title="Ändra">✎</button>`:""}${canDel?`<button class="x" data-d="${kind}:${id}" title="Ta bort">✕</button>`:""}</span>`;
 }
 
-function horseRow(h){
-  if(curAdmin && h.id === editingHorseId){
+function horseRow(h, mine){
+  const may = curAdmin || mine;
+  if(may && h.id === editingHorseId){
     const gsel = `<option value="">Ingen grupp</option>` + stData.groups.map(g=>`<option value="${g.id}"${g.id===h.group_id?" selected":""}>${esc(g.name)}</option>`).join("");
     return `<div class="editrow lvl3">
       <div class="field"><label class="fld">Hästens namn</label><input type="text" id="eh_name_${h.id}" value="${esc(h.name||'')}"></div>
@@ -229,26 +233,28 @@ function horseRow(h){
     </div>`;
   }
   const g = stData.groups.find(x=>x.id===h.group_id);
-  return `<div class="tleaf lvl3"><span class="cdot" style="background:${(g&&g.color)||'#c9d6cd'}"></span><span>${ic("🐴")} ${esc(h.name||'Häst')}</span>${tbtns("horse",h.id)}</div>`;
+  return `<div class="tleaf lvl3"><span class="cdot" style="background:${(g&&g.color)||'#c9d6cd'}"></span><span>${ic("🐴")} ${esc(h.name||'Häst')}</span>${tbtns("horse",h.id,may,may)}</div>`;
 }
 
 function profileNode(p, groupId, keyPrefix){
   const key = `p_${keyPrefix}_${p.id}`;
+  const mine = isMyProfile(p);
+  const may = curAdmin || mine;   // får redigera profilen (namn, mejl, hästar)
   const horses = (p.horse||[]).filter(h=> groupId===null ? !h.group_id : h.group_id===groupId);
   const out = [];
-  if(curAdmin && p.id === editingProfileId){
+  if(may && p.id === editingProfileId){
     out.push(`<div class="editrow lvl2"><div class="editname"><input type="text" id="epr_name_${p.id}" value="${esc(p.name)}">
       <button class="btn primary sm" data-s="profile:${p.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div></div>`);
   } else {
-    out.push(`<div class="trow lvl2" data-t="${key}">${ic("👤")} ${esc(p.name)} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${tbtns("profile",p.id)}</div>`);
+    out.push(`<div class="trow lvl2" data-t="${key}">${ic("👤")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${tbtns("profile",p.id,may,curAdmin)}</div>`);
   }
   if(stOpen[key]){
     const mails = (p.profile_member||[]).map(m=>m.email).filter(Boolean);
-    mails.forEach(em=> out.push(`<div class="tleaf lvl3">${ic("✉️")} ${esc(em)}${curAdmin?`<span class="tbtns"><button class="x" data-d="mail:${p.id}|${encodeURIComponent(em)}" title="Ta bort">✕</button></span>`:""}</div>`));
+    mails.forEach(em=> out.push(`<div class="tleaf lvl3">${ic("✉️")} ${esc(em)}${may?`<span class="tbtns"><button class="x" data-d="mail:${p.id}|${encodeURIComponent(em)}" title="Ta bort">✕</button></span>`:""}</div>`));
     if(!mails.length) out.push(`<div class="tleaf lvl3 tmuted">Ingen mejl kopplad än</div>`);
-    if(curAdmin) out.push(`<div class="addhorse lvl3"><input type="email" id="in_mail_${p.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-add="mail:${p.id}">+ Mejl</button></div>`);
-    horses.forEach(h=> out.push(horseRow(h)));
-    if(curAdmin){
+    if(may) out.push(`<div class="addhorse lvl3"><input type="email" id="in_mail_${p.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-add="mail:${p.id}">+ Mejl</button></div>`);
+    horses.forEach(h=> out.push(horseRow(h, mine)));
+    if(may){
       const gsel = `<option value="">Ingen grupp</option>` + stData.groups.map(g=>`<option value="${g.id}"${g.id===groupId?" selected":""}>${esc(g.name)}</option>`).join("");
       out.push(`<div class="addhorse lvl3"><input type="text" id="in_horse_${keyPrefix}_${p.id}" placeholder="Hästens namn"><select id="in_horsegrp_${keyPrefix}_${p.id}">${gsel}</select><button class="btn sm" data-add="horse:${keyPrefix}:${p.id}">+ Häst</button></div>`);
     }
