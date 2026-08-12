@@ -179,3 +179,12 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 .spin{opacity:.6;pointer-events:none}
 .center{min-height:70vh;display:flex;flex-direction:column;justify-content:center}
 .hint{font-size:.82rem;color:var(--muted);margin-top:8px}
+
+/* Mobil: ikon-knappar i headern så allt får plats */
+@media (max-width:640px){
+  header.app{gap:6px;padding:10px 12px}
+  header.app .logo{font-size:1.55rem}
+  header.app .btn{padding:8px 10px}
+  header.app .btn .lbl{display:none}
+  header.app .btn .ico{font-size:1.15rem}
+}
