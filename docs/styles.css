@@ -20,7 +20,7 @@ button{font-family:inherit;cursor:pointer}
 .ico{color:transparent;text-shadow:0 0 0 var(--ink)}
 
 header.app{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
-header.app .logo{font-family:var(--font-head);font-weight:700;font-size:1.3rem;display:flex;align-items:center;gap:8px}
+header.app .logo{font-family:"Great Vibes",cursive;font-weight:400;font-size:1.9rem;line-height:1;display:flex;align-items:center;gap:8px;color:var(--accent)}
 header.app .spacer{flex:1}
 
 .wrap{max-width:640px;margin:0 auto;padding:22px 18px 60px}
