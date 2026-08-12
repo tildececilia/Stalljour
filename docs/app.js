@@ -483,7 +483,7 @@ function drawScheduleShell(){
   const hint = mp.length ? "" :
     `<div class="hint">Du har ingen egen profil i det här stallet, så du kan se schemat men inte boka. Be admin lägga in din mejl på en profil.</div>`;
   el("schShell").innerHTML = `
-    <div class="card">
+    <div class="card schedtop">
       <div class="schedeyebrow">Schema</div>
       <h1 class="schedname">${esc(schedCtx.stable.name)}</h1>
       <div id="weeknav"></div>
@@ -497,13 +497,12 @@ function drawWeekNav(){
   const end = new Date(weekStart2); end.setDate(end.getDate()+6);
   const duty = dutyGroupForWeek(weekStart2, schedCtx.groups, schedCtx.stable.rotation_offset);
   el("weeknav").innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
       <button class="btn sm" id="wPrev">‹ Förra</button>
       <button class="btn sm" id="wWeek" title="Till nuvarande vecka">Vecka ${isoWeekNumber(weekStart2)}</button>
       <button class="btn sm" id="wNext">Nästa ›</button>
-      <div style="flex:1"></div>
-      <div class="muted" style="font-size:.82rem;text-align:right">${weekStart2.getDate()} ${MONTHS[weekStart2.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} · ${weekStart2.getFullYear()}</div>
     </div>
+    <div class="muted" style="font-size:.82rem;margin-top:6px">${weekStart2.getDate()} ${MONTHS[weekStart2.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} · ${weekStart2.getFullYear()}</div>
     ${duty?`<div style="margin-top:8px"><span class="dutychip" style="background:${duty.color||'#4e9e6e'}">${esc(duty.name)}</span></div>`:""}`;
   el("wPrev").onclick = ()=> shiftWeek2(-1);
   el("wNext").onclick = ()=> shiftWeek2(1);

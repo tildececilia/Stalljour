@@ -193,6 +193,7 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 /* Schemats rubrik */
 .schedeyebrow{font-size:.7rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
 .schedname{font-family:var(--font-head);font-weight:700;font-size:1.7rem;letter-spacing:-.01em;line-height:1.1;margin:2px 0 12px}
+.schedtop{text-align:center}
 
 /* Mobil: ikon-knappar i headern så allt får plats */
 @media (max-width:640px){
