@@ -481,10 +481,10 @@ function drawWeekNav(){
       <button class="btn sm" id="wPrev">‹ Förra</button>
       <button class="btn sm" id="wWeek" title="Till nuvarande vecka">Vecka ${isoWeekNumber(weekStart2)}</button>
       <button class="btn sm" id="wNext">Nästa ›</button>
-      ${duty?`<span class="dutychip" style="background:${duty.color||'#4e9e6e'}">${esc(duty.name)}</span>`:""}
       <div style="flex:1"></div>
       <div class="muted" style="font-size:.82rem;text-align:right">${weekStart2.getDate()} ${MONTHS[weekStart2.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} · ${weekStart2.getFullYear()}</div>
-    </div>`;
+    </div>
+    ${duty?`<div style="margin-top:8px"><span class="dutychip" style="background:${duty.color||'#4e9e6e'}">${esc(duty.name)}</span></div>`:""}`;
   el("wPrev").onclick = ()=> shiftWeek2(-1);
   el("wNext").onclick = ()=> shiftWeek2(1);
   el("wWeek").onclick = ()=>{ weekStart2 = startOfWeek(new Date()); drawWeekNav(); drawGrid(); };
@@ -530,7 +530,9 @@ async function drawGrid(keepScroll){
   days.forEach(d=>{
     const dISO = isoDate(d);
     const wknd = (d.getDay()===0 || d.getDay()===6);
-    html += `<div class="sdl${dISO===tISO?" today":""}${wknd?" weekend":""}"><span class="dn">${SHORT_DAYS[d.getDay()]}</span><span class="dd">${d.getDate()}/${d.getMonth()+1}</span></div>`;
+    const applicable = passes.filter(p=> passApplies(p, d));
+    const dayDone = applicable.length > 0 && applicable.every(p=> (map[p.id+"|"+dISO]||[]).length >= (p.capacity||1));
+    html += `<div class="sdl${dISO===tISO?" today":""}${wknd?" weekend":""}${dayDone?" done":""}"><span class="dn">${SHORT_DAYS[d.getDay()]}</span><span class="dd">${d.getDate()}/${d.getMonth()+1}</span></div>`;
     passes.forEach(p=>{ html += scheduleCell(p, d, dISO, map, myIds, tISO); });
   });
   html += `</div></div>`;
