@@ -17,7 +17,11 @@ html,body{margin:0}
 body{font-family:var(--font-body);background:var(--bg);color:var(--ink);line-height:1.5;-webkit-font-smoothing:antialiased}
 button{font-family:inherit;cursor:pointer}
 .head-font{font-family:var(--font-head);letter-spacing:-.01em}
-.ico{color:transparent;text-shadow:0 0 0 var(--ink)}
+.icn{width:1.05em;height:1.05em;vertical-align:-0.18em;flex-shrink:0}
+.btn .icn{width:16px;height:16px}
+.trow .icn,.tleaf .icn{width:17px;height:17px;color:var(--muted)}
+.menuitem .icn{width:16px;height:16px;margin-right:2px;vertical-align:-0.2em}
+.tbtns .x .icn{width:17px;height:17px}
 
 header.app{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
 header.app .logo{font-family:"Great Vibes",cursive;font-weight:400;font-size:1.9rem;line-height:1;display:flex;align-items:center;gap:8px;color:var(--accent)}
@@ -196,5 +200,5 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
   header.app .logo{font-size:1.55rem}
   header.app .btn{padding:8px 10px}
   header.app .btn .lbl{display:none}
-  header.app .btn .ico{font-size:1.15rem}
+  header.app .btn .icn{width:19px;height:19px}
 }

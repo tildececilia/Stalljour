@@ -50,7 +50,26 @@ function normEmail(e){ return (e||"").trim().toLowerCase(); }
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function el(id){ return document.getElementById(id); }
 function msg(text, kind){ return `<div class="msg ${kind||""}">${esc(text)}</div>`; }
-function ic(e){ return `<span class="ico">${e}</span>`; }
+/* Konturikoner (Lucide-stil: streckade, ej ifyllda) */
+const ICONS = {
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1"/>',
+  mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+};
+function ic(name){
+  return `<svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]||""}</svg>`;
+}
 
 /* ============ Router ============ */
 function render(){
@@ -66,7 +85,7 @@ function renderLogin(){
   appEl.innerHTML = `
     <div class="center">
       <div class="card">
-        <h1 class="title">Välkommen ${ic("🐴")}</h1>
+        <h1 class="title">Välkommen!</h1>
         <p class="sub">Logga in med din mejl. Vi skickar en länk — inget lösenord behövs.</p>
         <div id="loginMsg"></div>
         <div class="field">
@@ -180,7 +199,8 @@ async function renderStable(stableId){
     if(st.error) throw st.error;
     curAdmin = await amIAdmin(stableId);
     el("stableHead").innerHTML = `
-      <h1 class="title">${esc(st.data.name)}</h1>
+      <div class="schedeyebrow">Inställningar</div>
+      <h1 class="schedname" style="margin-bottom:6px">${esc(st.data.name)}</h1>
       <p class="sub" style="margin:0">${curAdmin ? '<span class="pill">Admin</span>' : '<span class="muted">Medlem</span>'}</p>`;
     await reloadStableData();
   }catch(e){
@@ -219,7 +239,7 @@ function tbtns(kind, id, canEdit, canDel){
   if(canEdit === undefined) canEdit = curAdmin;
   if(canDel === undefined) canDel = canEdit;
   if(!canEdit && !canDel) return "";
-  return `<span class="tbtns">${canEdit?`<button class="x" data-e="${kind}:${id}" title="Ändra">✎</button>`:""}${canDel?`<button class="x" data-d="${kind}:${id}" title="Ta bort">✕</button>`:""}</span>`;
+  return `<span class="tbtns">${canEdit?`<button class="x" data-e="${kind}:${id}" title="Ändra">${ic("pencil")}</button>`:""}${canDel?`<button class="x" data-d="${kind}:${id}" title="Ta bort">${ic("x")}</button>`:""}</span>`;
 }
 
 function horseRow(h, mine){
@@ -233,7 +253,7 @@ function horseRow(h, mine){
     </div>`;
   }
   const g = stData.groups.find(x=>x.id===h.group_id);
-  return `<div class="tleaf lvl3"><span class="cdot" style="background:${(g&&g.color)||'#c9d6cd'}"></span><span>${ic("🐴")} ${esc(h.name||'Häst')}</span>${tbtns("horse",h.id,may,may)}</div>`;
+  return `<div class="tleaf lvl3"><span class="cdot" style="background:${(g&&g.color)||'#c9d6cd'}"></span><span>${esc(h.name||'Häst')}</span>${tbtns("horse",h.id,may,may)}</div>`;
 }
 
 function profileNode(p, groupId, keyPrefix){
@@ -246,11 +266,11 @@ function profileNode(p, groupId, keyPrefix){
     out.push(`<div class="editrow lvl2"><div class="editname"><input type="text" id="epr_name_${p.id}" value="${esc(p.name)}">
       <button class="btn primary sm" data-s="profile:${p.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div></div>`);
   } else {
-    out.push(`<div class="trow lvl2" data-t="${key}">${ic("👤")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${tbtns("profile",p.id,may,curAdmin)}</div>`);
+    out.push(`<div class="trow lvl2" data-t="${key}">${ic("user")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${tbtns("profile",p.id,may,curAdmin)}</div>`);
   }
   if(stOpen[key]){
     const mails = (p.profile_member||[]).map(m=>m.email).filter(Boolean);
-    mails.forEach(em=> out.push(`<div class="tleaf lvl3">${ic("✉️")} ${esc(em)}${may?`<span class="tbtns"><button class="x" data-d="mail:${p.id}|${encodeURIComponent(em)}" title="Ta bort">✕</button></span>`:""}</div>`));
+    mails.forEach(em=> out.push(`<div class="tleaf lvl3">${ic("mail")} ${esc(em)}${may?`<span class="tbtns"><button class="x" data-d="mail:${p.id}|${encodeURIComponent(em)}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
     if(!mails.length) out.push(`<div class="tleaf lvl3 tmuted">Ingen mejl kopplad än</div>`);
     if(may) out.push(`<div class="addhorse lvl3"><input type="email" id="in_mail_${p.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-add="mail:${p.id}">+ Mejl</button></div>`);
     horses.forEach(h=> out.push(horseRow(h, mine)));
@@ -315,13 +335,13 @@ function catRow(c){
     return `<div class="editrow lvl2"><div class="editname"><input type="text" id="ec_name_${c.id}" value="${esc(c.name)}">
       <button class="btn primary sm" data-s="cat:${c.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div></div>`;
   }
-  return `<div class="tleaf lvl2">${ic("🏷")} ${esc(c.name)}${tbtns("cat",c.id)}</div>`;
+  return `<div class="tleaf lvl2">${ic("tag")} ${esc(c.name)}${tbtns("cat",c.id)}</div>`;
 }
 
 function renderStableTree(){
   const host = el("stTreeCard"); if(!host || !stData) return;
   const t = [];
-  t.push(`<div class="trow lvl0" data-t="grupper">${ic("👥")} Grupper ${caret("grupper")}</div>`);
+  t.push(`<div class="trow lvl0" data-t="grupper">${ic("users")} Grupper ${caret("grupper")}</div>`);
   if(stOpen.grupper){
     stData.groups.forEach(g=> t.push(groupNode(g)));
     const loose = stData.profiles.filter(p=> !(p.horse||[]).length || (p.horse||[]).some(h=>!h.group_id));
@@ -334,15 +354,15 @@ function renderStableTree(){
       t.push(`<div class="addhorse lvl1"><input type="text" id="in_profile" placeholder="Ny profil, t.ex. Familjen Ek"><button class="btn sm" data-add="profile">+ Profil</button></div>`);
     }
   }
-  t.push(`<div class="trow lvl0" data-t="schema">${ic("📅")} Schema ${caret("schema")}</div>`);
+  t.push(`<div class="trow lvl0" data-t="schema">${ic("calendar")} Schema ${caret("schema")}</div>`);
   if(stOpen.schema){
-    t.push(`<div class="trow lvl1" data-t="pass">${ic("⏱")} Pass ${caret("pass")}</div>`);
+    t.push(`<div class="trow lvl1" data-t="pass">${ic("clock")} Pass ${caret("pass")}</div>`);
     if(stOpen.pass){
       stData.passes.forEach(p=> t.push(passRow(p)));
       if(!stData.passes.length) t.push(`<div class="tleaf lvl2 tmuted">Inga pass än</div>`);
       if(curAdmin) t.push(addPassForm());
     }
-    t.push(`<div class="trow lvl1" data-t="kategorier">${ic("🏷")} Kategorier ${caret("kategorier")}</div>`);
+    t.push(`<div class="trow lvl1" data-t="kategorier">${ic("tag")} Kategorier ${caret("kategorier")}</div>`);
     if(stOpen.kategorier){
       stData.cats.forEach(c=> t.push(catRow(c)));
       if(!stData.cats.length) t.push(`<div class="tleaf lvl2 tmuted">Inga kategorier än</div>`);
@@ -665,7 +685,7 @@ function renderStats(tgt, myIds){
 let theme = (()=>{ try{ return localStorage.getItem("stalljour.theme")||"light"; }catch(e){ return "light"; } })();
 function applyTheme(t){
   document.documentElement.setAttribute("data-theme", t==="dark" ? "dark" : "light");
-  const b = el("btnTheme"); if(b) b.innerHTML = ic(t==="dark" ? "☀️" : "🌙");
+  const b = el("btnTheme"); if(b) b.innerHTML = ic(t==="dark" ? "sun" : "moon");
 }
 applyTheme(theme);
 el("btnTheme").onclick = ()=>{ theme = theme==="dark"?"light":"dark"; try{ localStorage.setItem("stalljour.theme", theme); }catch(e){} applyTheme(theme); };
@@ -690,7 +710,7 @@ function buildProfileMenu(){
       `<button class="menuitem" data-bookas="${p.id}">${p.id===schedCtx.actingProfileId?"✓ ":""}${esc(p.name)}</button>`).join("");
   }
   // Mina stall (nivå 1) -> stall (nivå 2) -> Mina profiler (nivå 3) -> profilnamn
-  let tree = `<button class="menuitem" data-pm="stables">${ic("🏡")} Mina stall <span class="caret">${pmState.stablesOpen?"▾":"▸"}</span></button>`;
+  let tree = `<button class="menuitem" data-pm="stables">${ic("home")} Mina stall <span class="caret">${pmState.stablesOpen?"▾":"▸"}</span></button>`;
   if(pmState.stablesOpen){
     if(!pmState.stables) tree += `<div class="menuhead sub">Laddar…</div>`;
     else if(!pmState.stables.length) tree += `<div class="menuhead sub">Inga stall än</div>`;
@@ -698,7 +718,7 @@ function buildProfileMenu(){
       const open = pmState.openStableId === s.id;
       tree += `<button class="menuitem sub1" data-pmstable="${s.id}">${esc(s.name)} <span class="caret">${open?"▾":"▸"}</span></button>`;
       if(open){
-        tree += `<button class="menuitem sub2" data-pm="profiles">${ic("👥")} Mina profiler <span class="caret">${pmState.profilesOpen?"▾":"▸"}</span></button>`;
+        tree += `<button class="menuitem sub2" data-pm="profiles">${ic("users")} Mina profiler <span class="caret">${pmState.profilesOpen?"▾":"▸"}</span></button>`;
         if(pmState.profilesOpen){
           if(!pmState.myProfiles) tree += `<div class="menuhead sub">Laddar…</div>`;
           else if(!pmState.myProfiles.length) tree += `<div class="pmleaf muted">Inga profiler kopplade till din mejl</div>`;
@@ -711,8 +731,8 @@ function buildProfileMenu(){
     <div class="menuhead">${esc(session.email)}</div>
     ${bookAs}
     ${tree}
-    <button class="menuitem" data-act="newstable">${ic("➕")} Nytt stall</button>
-    <button class="menuitem" data-act="logout">${ic("🚪")} Logga ut</button>`;
+    <button class="menuitem" data-act="newstable">${ic("plus")} Nytt stall</button>
+    <button class="menuitem" data-act="logout">${ic("logout")} Logga ut</button>`;
   m.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=> profileAction(b.getAttribute("data-act")));
   m.querySelectorAll("[data-bookas]").forEach(b=> b.onclick = ()=>{
     schedCtx.actingProfileId = b.getAttribute("data-bookas");
@@ -804,6 +824,9 @@ el("btnSchedule").onclick = (e)=>{
   closeMenus();
   if(!wasOpen) openScheduleMenu();
 };
+
+/* ============ Ikoner i headern ============ */
+document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
 
 /* ============ Start ============ */
 function setSessionFrom(s){ session = s ? { id: s.user.id, email: normEmail(s.user.email) } : null; }
