@@ -43,6 +43,24 @@ function capOpts(sel){ let o=""; for(let i=1;i<=10;i++) o += `<option value="${i
 let weekStart2 = null;   // schemats vecka (måndag)
 let schedCtx = null;     // {stable, groups, passes, myProfiles, actingProfileId}
 
+/* ---- Färgkodning: personfärg på namn + kategorinyans på rutor ---- */
+function hashHue(s){
+  let h = 2166136261;
+  for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;
+  return ((h % 360) + 360) % 360;
+}
+function profChipStyle(pid){ const h = hashHue(String(pid)); return `background:hsla(${h},55%,45%,.20)`; }
+const CAT_HUES = [150, 95, 172, 128, 60];   // olika gröna nyanser (och gulgrönt) per kategori
+function buildCatTints(passes){
+  const m = {}; let i = 0;
+  sortPassesByTime(passes).forEach(p=>{
+    const k = p.category_id || "none";
+    if(k !== "none" && !(k in m)){ m[k] = CAT_HUES[i % CAT_HUES.length]; i++; }
+  });
+  return m;
+}
+
 const appEl = document.getElementById("app");
 
 /* ============ Hjälpare ============ */
@@ -715,11 +733,14 @@ async function drawGrid(keepScroll){
     });
   }
 
+  schedCtx.catTint = buildCatTints(passes);
   let html = `<div class="card schedcard" style="overflow-x:auto"><div class="sgrid" style="--cols:${passes.length}">`;
   // rubrikrad: hörn + pass (vågrätt)
   html += `<div class="scorner"></div>`;
   passes.forEach(p=>{
-    html += `<div class="sph"><span class="pn">${esc(p.name)}</span><span class="pt">${esc(p.start_time||"")}${p.capacity>1?" · "+p.capacity+"p":""}</span></div>`;
+    const hu = schedCtx.catTint[p.category_id];
+    const hstyle = hu != null ? ` style="background:hsla(${hu},45%,45%,.13);border-radius:8px"` : "";
+    html += `<div class="sph"${hstyle}><span class="pn">${esc(p.name)}</span><span class="pt">${esc(p.start_time||"")}${p.capacity>1?" · "+p.capacity+"p":""}</span></div>`;
   });
   // en rad per veckodag (lodrätt)
   days.forEach(d=>{
@@ -752,12 +773,19 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
     const mine = myIds.has(bk.profile_id);
     const canReq = !isPast && schedCtx.actingProfileId;
     const reqAttrs = canReq ? ` data-req="${bk.id}|${bk.profile_id}|${mine?1:0}" data-pinfo="${esc(p.name)}|${dISO}"` : "";
-    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}"><span class="cn">${esc((bk.profile&&bk.profile.name)||"?")}</span>${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
+    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} style="${profChipStyle(bk.profile_id)}" title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}"><span class="cn">${esc((bk.profile&&bk.profile.name)||"?")}</span>${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
   }).join("");
   const empty = (!list.length && !canBook) ? `<span class="sempty">–</span>` : "";
   const badge = cap>1 ? `<span class="scap ${full?"ok":"need"}">${list.length}/${cap}</span>` : "";
   const btn = canBook ? `<button class="sbook" data-book="${p.id}" data-date="${dISO}" title="Ta pass">+</button>` : "";
-  return `<div class="scell${mineHere?" mine":""}${isPast?" past":""}">
+  const hu = (schedCtx.catTint || {})[p.category_id];
+  let cellStyle = "";
+  if(hu != null){
+    cellStyle = `background:hsla(${hu},45%,45%,.08)`;
+    if(!mineHere) cellStyle += `;border-color:hsla(${hu},35%,42%,.45)`;
+    cellStyle = ` style="${cellStyle}"`;
+  }
+  return `<div class="scell${mineHere?" mine":""}${isPast?" past":""}"${cellStyle}>
       ${badge?`<div class="scaprow">${badge}</div>`:""}
       <div class="schips">${chips}${empty}</div>
       ${btn}
@@ -870,7 +898,9 @@ function renderStats(tgt, myIds){
     const chips = catKeys.map(k=>{
       const c = pr.byCat[k] || { name:tgt.cats[k].name, target:0, actual:0 };
       const done = c.target > 0 && c.actual >= c.target;
-      return `<span class="statcat ${done?"done":""}">${esc(c.name)} ${c.actual}/${c.target}</span>`;
+      const hu = (schedCtx.catTint || {})[k];
+      const ts = (!done && hu != null) ? ` style="background:hsla(${hu},45%,45%,.12)"` : "";
+      return `<span class="statcat ${done?"done":""}"${ts}>${esc(c.name)} ${c.actual}/${c.target}</span>`;
     }).join("");
     return `<div class="statrow${mine?" me":""}"><span class="sn">${esc(pr.name)}</span>${chips}</div>`;
   }).join("");
