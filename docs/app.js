@@ -210,44 +210,98 @@ async function renderHome(){
   el("createStableBtn").onclick = createStable;
 
   try{
-    const stables = await loadMyStables();
-    // Har man bara ett stall – gå direkt till schemat (en gång per inloggning)
-    if(stables.length === 1 && !didAutoRoute){
+    const all = await loadMyStables();
+    const units = all.filter(u=> u.id);
+    // Har man bara en del – gå direkt till schemat (en gång per inloggning)
+    if(units.length === 1 && !didAutoRoute && !all.some(u=> u.emptyOrg)){
       didAutoRoute = true;
       weekStart2 = startOfWeek(new Date());
-      view = { name: "schedule", stableId: stables[0].id };
+      view = { name: "schedule", stableId: units[0].id };
       render();
       return;
     }
     const list = el("stableList");
-    if(!stables.length){ list.innerHTML = `<div class="empty">Du är inte med i något stall än. Skapa ett nedan, eller be en admin lägga in din mejl på en profil.</div>`; return; }
-    list.innerHTML = stables.map(s=>`
-      <button class="row" data-open="${s.id}">
-        <div class="grow"><div class="nm">${esc(s.name)}</div><div class="meta">${s.kind==="ridskola"?"Ridskola · ":""}${s.isAdmin?"Admin":"Medlem"}</div></div>
-        ${s.kind==="ridskola"?`<span class="tagpill">ridskola</span>`:""}
-        <span class="chev">›</span>
-      </button>`).join("");
-    list.querySelectorAll("[data-open]").forEach(b=> b.onclick = ()=>{ view={name:"stable",stableId:b.getAttribute("data-open")}; render(); });
+    if(!all.length){ list.innerHTML = `<div class="empty">Du är inte med i något stall än. Skapa ett nedan, eller be en admin lägga in din mejl.</div>`; return; }
+    // gruppera per stall (org)
+    const orgs = new Map();
+    all.forEach(u=>{
+      if(!orgs.has(u.orgId)) orgs.set(u.orgId, { id:u.orgId, name:u.orgName, isAdmin:false, units:[] });
+      const o = orgs.get(u.orgId);
+      if(u.isAdmin) o.isAdmin = true;
+      if(u.id) o.units.push(u);
+    });
+    list.innerHTML = [...orgs.values()].map(o=>`
+      <div class="orgblock">
+        <div class="orghead">${ic("home")} ${esc(o.name)} ${o.isAdmin?`<span class="pill">Admin</span>`:""}</div>
+        ${o.units.map(u=>`
+          <button class="row lvl1" data-open="${u.id}">
+            <div class="grow"><div class="nm">${esc(u.name)}</div><div class="meta">${kindLabel(u.kind)}</div></div>
+            <span class="chev">›</span>
+          </button>`).join("")}
+        ${!o.units.length ? `<div class="empty" style="margin-left:16px">Inga delar än.</div>` : ""}
+        ${o.isAdmin ? `
+          <button class="row lvl1" data-newunit="${o.id}">
+            <div class="grow"><div class="nm" style="color:var(--accent)">${ic("plus")} Skapa ny</div><div class="meta">schema eller ridskola</div></div>
+          </button>
+          <div class="addunit" id="nu_${o.id}" style="display:none">
+            <select id="nuk_${o.id}"><option value="stall">Jourschema</option><option value="ridskola">Ridskola</option></select>
+            <input type="text" id="nun_${o.id}" placeholder="Namn, t.ex. Ridskolan">
+            <button class="btn primary sm" data-mkunit="${o.id}">Skapa</button>
+          </div>` : ""}
+      </div>`).join("");
+    list.querySelectorAll("[data-open]").forEach(b=> b.onclick = ()=>{ weekStart2 = startOfWeek(new Date()); view={name:"schedule",stableId:b.getAttribute("data-open")}; render(); });
+    list.querySelectorAll("[data-newunit]").forEach(b=> b.onclick = ()=>{
+      const f = el("nu_" + b.getAttribute("data-newunit"));
+      f.style.display = f.style.display === "none" ? "" : "none";
+    });
+    list.querySelectorAll("[data-mkunit]").forEach(b=> b.onclick = async ()=>{
+      const oid = b.getAttribute("data-mkunit");
+      const kind = el("nuk_"+oid).value, name = (el("nun_"+oid).value||"").trim();
+      const { data, error } = await db.rpc("create_unit", { p_org: oid, p_name: name, p_kind: kind });
+      if(error){ alert("Kunde inte skapa: " + error.message); return; }
+      view = { name:"stable", stableId: data };
+      render();
+    });
   }catch(e){
     el("stableList").innerHTML = msg("Kunde inte hämta stall: " + (e.message||e), "err");
   }
 }
 
 async function loadMyStables(){
+  // Returnerar en platt lista av DELAR (units): {id,name,kind,orgId,orgName,isAdmin}
   const map = new Map();
-  // stall/ridskolor där jag är admin
+  const adm = await db.from("org_admin").select("org(id,name,stable(id,name,kind))").eq("email", session.email);
+  if(!adm.error){
+    (adm.data||[]).forEach(r=>{
+      const o = r.org; if(!o) return;
+      const units = o.stable || [];
+      units.forEach(u=> map.set(u.id, { id:u.id, name:u.name, kind:u.kind||"stall", orgId:o.id, orgName:o.name, isAdmin:true }));
+      if(!units.length) map.set("org-"+o.id, { id:null, emptyOrg:true, name:o.name, kind:"stall", orgId:o.id, orgName:o.name, isAdmin:true });
+    });
+    const mem = await db.from("profile_member").select("profile(stable(id,name,kind,org_id,org(name)))").eq("email", session.email);
+    if(!mem.error) (mem.data||[]).forEach(r=>{
+      const s = r.profile && r.profile.stable; if(!s || map.has(s.id)) return;
+      map.set(s.id, { id:s.id, name:s.name, kind:s.kind||"stall", orgId:s.org_id, orgName:(s.org&&s.org.name)||s.name, isAdmin:false });
+    });
+    const sm = await db.from("rs_student_member").select("rs_student(stable(id,name,kind,org_id,org(name)))").eq("email", session.email);
+    if(!sm.error) (sm.data||[]).forEach(r=>{
+      const s = r.rs_student && r.rs_student.stable; if(!s || map.has(s.id)) return;
+      map.set(s.id, { id:s.id, name:s.name, kind:s.kind||"stall", orgId:s.org_id, orgName:(s.org&&s.org.name)||s.name, isAdmin:false });
+    });
+    return [...map.values()];
+  }
+  // Fallback (om db/org.sql inte körts än): gamla platta modellen
   const admin = await db.from("stable_admin").select("stable(*)").eq("email", session.email);
   if(admin.error) throw admin.error;
-  admin.data.forEach(r=>{ if(r.stable) map.set(r.stable.id, { ...r.stable, isAdmin:true }); });
-  // stall där jag är med via en profil
+  admin.data.forEach(r=>{ if(r.stable) map.set(r.stable.id, { ...r.stable, orgId:r.stable.id, orgName:r.stable.name, isAdmin:true }); });
   const mem = await db.from("profile_member").select("profile(stable(*))").eq("email", session.email);
-  if(mem.error) throw mem.error;
-  mem.data.forEach(r=>{ const s=r.profile && r.profile.stable; if(s && !map.has(s.id)) map.set(s.id, { ...s, isAdmin:false }); });
-  // ridskolor där jag är med via en elev
+  if(!mem.error) mem.data.forEach(r=>{ const s=r.profile && r.profile.stable; if(s && !map.has(s.id)) map.set(s.id, { ...s, orgId:s.id, orgName:s.name, isAdmin:false }); });
   const sm = await db.from("rs_student_member").select("rs_student(stable(*))").eq("email", session.email);
-  if(!sm.error) (sm.data||[]).forEach(r=>{ const s=r.rs_student && r.rs_student.stable; if(s && !map.has(s.id)) map.set(s.id, { ...s, isAdmin:false }); });
+  if(!sm.error) (sm.data||[]).forEach(r=>{ const s=r.rs_student && r.rs_student.stable; if(s && !map.has(s.id)) map.set(s.id, { ...s, orgId:s.id, orgName:s.name, isAdmin:false }); });
   return [...map.values()];
 }
+function unitLabel(u){ return u.orgName && u.orgName !== u.name ? `${u.orgName} · ${u.name}` : u.name; }
+function kindLabel(k){ return k === "ridskola" ? "Ridskola" : "Jourschema"; }
 
 async function createStable(){
   const name = el("newStable").value.trim();
@@ -282,6 +336,7 @@ async function renderStable(stableId){
   try{
     const st = await db.from("stable").select("*").eq("id", stableId).single();
     if(st.error) throw st.error;
+    curOrgId = st.data.org_id || null;
     curAdmin = await amIAdmin(stableId);
     el("stableHead").innerHTML = `
       <div class="schedeyebrow">Inställningar</div>
@@ -294,13 +349,17 @@ async function renderStable(stableId){
 }
 
 async function amIAdmin(stableId){
-  const r = await db.from("stable_admin").select("email").eq("stable_id", stableId).eq("email", session.email).maybeSingle();
-  return !r.error && !!r.data;
+  const r = await db.rpc("am_i_admin", { sid: stableId });
+  if(!r.error) return !!r.data;
+  // fallback om db/org.sql inte körts än
+  const q = await db.from("stable_admin").select("email").eq("stable_id", stableId).eq("email", session.email).maybeSingle();
+  return !q.error && !!q.data;
 }
 
 /* ============ Stall-inställningar: trädvy ============ */
 let stOpen = {};        // vilka noder i trädet som är öppna
 let stStableId = null;
+let curOrgId = null;    // stallets (organisationens) id för aktuell del
 let stData = null;      // {groups, cats, passes, profiles}
 let focusProfileId = null;  // profil att öppna direkt (från Profil-menyn)
 
@@ -311,7 +370,8 @@ async function reloadStableData(){
     db.from("category").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("pass_def").select("*, category(name)").eq("stable_id", sid).order("sort_order"),
     db.from("profile").select("id,name,remind1_min,remind2_min,profile_member(email),horse(id,name,group_id)").eq("stable_id", sid).order("created_at"),
-    db.from("stable_admin").select("email").eq("stable_id", sid)
+    curOrgId ? db.from("org_admin").select("email").eq("org_id", curOrgId)
+             : db.from("stable_admin").select("email").eq("stable_id", sid)
   ]);
   const err = g.error || c.error || p.error || pr.error;
   if(err){ el("stTreeCard").innerHTML = msg("Kunde inte hämta stallets data: " + err.message, "err"); return; }
@@ -512,8 +572,10 @@ async function toggleAdminForProfile(pid){
       `Vill du göra ${p.name} till admin? ${mails.length>1?"Profilens mejladresser":"Mejladressen"} (${mails.join(", ")}) får då full behörighet att ändra allt i stallet.`,
       { title:"Gör till admin", okText:"Ja, gör till admin", primary:true });
     if(!ok) return;
-    const newRows = mails.filter(m=> !admins.includes(m)).map(email=> ({ stable_id: stStableId, email }));
-    const r = await db.from("stable_admin").insert(newRows);
+    const newRows = curOrgId
+      ? mails.filter(m=> !admins.includes(m)).map(email=> ({ org_id: curOrgId, email }))
+      : mails.filter(m=> !admins.includes(m)).map(email=> ({ stable_id: stStableId, email }));
+    const r = await db.from(curOrgId ? "org_admin" : "stable_admin").insert(newRows);
     if(r.error){ alert("Kunde inte göra till admin: " + r.error.message); return; }
   } else {
     const remaining = admins.filter(a=> !mails.includes(a));
@@ -523,7 +585,9 @@ async function toggleAdminForProfile(pid){
       `Vill du ta bort admin-behörigheten för ${p.name} (${mails.join(", ")})?${includesMe ? " OBS: det inkluderar dig själv — du förlorar admin-åtkomsten direkt." : ""}`,
       { title:"Ta bort admin" });
     if(!ok) return;
-    const r = await db.from("stable_admin").delete().eq("stable_id", stStableId).in("email", mails);
+    const r = curOrgId
+      ? await db.from("org_admin").delete().eq("org_id", curOrgId).in("email", mails)
+      : await db.from("stable_admin").delete().eq("stable_id", stStableId).in("email", mails);
     if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
     if(includesMe){ view = { name:"stable", stableId: stStableId }; render(); return; }
   }
@@ -1065,7 +1129,7 @@ function buildProfileMenu(){
     else if(!pmState.stables.length) tree += `<div class="menuhead sub">Inga stall än</div>`;
     else pmState.stables.forEach(s=>{
       const open = pmState.openStableId === s.id;
-      tree += `<button class="menuitem sub1" data-pmstable="${s.id}">${esc(s.name)} <span class="caret">${open?"▾":"▸"}</span></button>`;
+      tree += `<button class="menuitem sub1" data-pmstable="${s.id}">${esc(unitLabel(s))} <span class="caret">${open?"▾":"▸"}</span></button>`;
       if(open){
         tree += `<button class="menuitem sub2" data-pm="profiles">${ic("users")} Mina profiler <span class="caret">${pmState.profilesOpen?"▾":"▸"}</span></button>`;
         if(pmState.profilesOpen){
@@ -1095,7 +1159,7 @@ function buildProfileMenu(){
     if(k === "stables"){
       pmState.stablesOpen = !pmState.stablesOpen;
       if(pmState.stablesOpen && !pmState.stables){
-        loadMyStables().then(s=>{ pmState.stables = s; buildProfileMenu(); }).catch(()=>{ pmState.stables = []; buildProfileMenu(); });
+        loadMyStables().then(s=>{ pmState.stables = s.filter(u=> u.id); buildProfileMenu(); }).catch(()=>{ pmState.stables = []; buildProfileMenu(); });
       }
     }
     if(k === "profiles"){
@@ -1175,7 +1239,7 @@ async function gotoView(name){
   if(name==="schedule") weekStart2 = startOfWeek(new Date());
   if(view.stableId){ view = { name, stableId: view.stableId }; render(); return; }
   try{
-    const stables = await loadMyStables();
+    const stables = (await loadMyStables()).filter(u=> u.id);
     if(stables.length === 1){ view = { name, stableId: stables[0].id }; }
     else { view = { name:"home", stableId:null }; }
     render();
@@ -1189,14 +1253,14 @@ async function openScheduleMenu(){
   m.innerHTML = `<div class="menuhead sub">Laddar…</div>`;
   m.classList.add("open");
   try{
-    const stables = await loadMyStables();
+    const stables = (await loadMyStables()).filter(u=> u.id);
     if(stables.length <= 1){
       closeMenus();
       if(stables.length === 1){ weekStart2 = startOfWeek(new Date()); view = { name:"schedule", stableId: stables[0].id }; render(); }
       return;
     }
     m.innerHTML = `<div class="menuhead">Välj stall</div>` + stables.map(s=>
-      `<button class="menuitem" data-sched="${s.id}">${view.stableId===s.id?"✓ ":""}${esc(s.name)}</button>`).join("");
+      `<button class="menuitem" data-sched="${s.id}">${view.stableId===s.id?"✓ ":""}${esc(unitLabel(s))}</button>`).join("");
     m.querySelectorAll("[data-sched]").forEach(b=> b.onclick = ()=>{
       closeMenus();
       weekStart2 = startOfWeek(new Date());
@@ -1722,6 +1786,7 @@ async function renderSchool(stableId){
   el("scBack").onclick = ()=>{ view={name:"home",stableId:null}; render(); };
   try{
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    curOrgId = st.data.org_id || null;
     curAdmin = await amIAdmin(stableId);
     el("scHead").innerHTML = `<div class="schedeyebrow">Inställningar · Ridskola</div><h1 class="schedname">${esc(st.data.name)}</h1>
       <p class="sub" style="margin:0">${curAdmin ? '<span class="pill">Admin</span>' : '<span class="muted">Medlem</span>'}</p>`;

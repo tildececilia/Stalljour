@@ -232,6 +232,13 @@ label.chk input{accent-color:var(--accent);width:17px;height:17px}
 .logrow:first-child{border-top:none}
 .logtime{color:var(--muted);font-size:.76rem;white-space:nowrap;min-width:80px;font-variant-numeric:tabular-nums}
 
+/* Mina stall: stall → delar */
+.orgblock{border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:12px}
+.orghead{display:flex;align-items:center;gap:8px;font-weight:700;font-family:var(--font-head);font-size:1.05rem;padding:4px 6px 10px}
+.row.lvl1{margin-left:14px;width:calc(100% - 14px)}
+.addunit{display:flex;gap:8px;margin:8px 0 4px 14px;flex-wrap:wrap}
+.addunit select,.addunit input{width:auto;flex:1;min-width:120px;padding:9px 11px;font-size:.9rem}
+
 /* Ridskola: lektionsroster */
 .scsrow{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--line);font-size:.92rem}
 .scsrow:first-child{border-top:none}
