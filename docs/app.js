@@ -391,11 +391,15 @@ function startEdit(spec){
 }
 function cancelEdit(){ editingPassId = editingHorseId = editingGroupId = editingCatId = editingProfileId = null; renderStableTree(); }
 
-function confirmDialog(text){
+function confirmDialog(text, opts){
+  opts = opts || {};
+  const title = opts.title || "Är du säker?";
+  const okText = opts.okText || "Ja, ta bort";
+  const okClass = opts.primary ? "btn primary" : "btn danger-solid";
   return new Promise(res=>{
     const ov = document.createElement("div"); ov.className = "modal-ov";
-    ov.innerHTML = `<div class="modal"><h3>Är du säker?</h3><p>${esc(text)}</p>
-      <div class="modal-btns"><button class="btn" id="mCancel">Avbryt</button><button class="btn danger-solid" id="mOk">Ja, ta bort</button></div></div>`;
+    ov.innerHTML = `<div class="modal"><h3>${esc(title)}</h3><p>${esc(text)}</p>
+      <div class="modal-btns"><button class="btn" id="mCancel">Avbryt</button><button class="${okClass}" id="mOk">${esc(okText)}</button></div></div>`;
     document.body.appendChild(ov);
     const done = v => { ov.remove(); res(v); };
     ov.querySelector("#mCancel").onclick = ()=> done(false);
@@ -560,7 +564,7 @@ async function drawGrid(keepScroll){
   if(keepScroll) window.scrollTo(0, scrollY);
 
   host.querySelectorAll("[data-book]").forEach(btn=> btn.onclick = ()=> bookCell(btn.getAttribute("data-book"), btn.getAttribute("data-date")));
-  host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = ()=> cancelBooking(btn.getAttribute("data-cancel")));
+  host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = ()=> cancelBooking(btn.getAttribute("data-cancel"), btn.getAttribute("data-cinfo")));
 }
 
 function scheduleCell(p, d, dISO, map, myIds, tISO){
@@ -573,7 +577,7 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
   const canBook = schedCtx.actingProfileId && !full && !isPast;
   const chips = list.map(bk=>{
     const mine = myIds.has(bk.profile_id);
-    return `<span class="schip">${esc((bk.profile&&bk.profile.name)||"?")}${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" title="Avboka">✕</button>`:""}</span>`;
+    return `<span class="schip">${esc((bk.profile&&bk.profile.name)||"?")}${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
   }).join("");
   const empty = (!list.length && !canBook) ? `<span class="sempty">–</span>` : "";
   const badge = cap>1 ? `<span class="scap ${full?"ok":"need"}">${list.length}/${cap}</span>` : "";
@@ -587,6 +591,18 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
 
 async function bookCell(passId, dISO){
   const pid = schedCtx.actingProfileId; if(!pid) return;
+  // Är det min grupps jourvecka? Annars: fråga innan bokning.
+  const duty = dutyGroupForWeek(weekStart2, schedCtx.groups, schedCtx.stable.rotation_offset);
+  if(duty){
+    const prof = (schedCtx.profiles||[]).find(x=> x.id === pid);
+    const myGroups = new Set(((prof && prof.horse) || []).map(h=> h.group_id).filter(Boolean));
+    if(!myGroups.has(duty.id)){
+      const ok = await confirmDialog(
+        `Det är inte din grupp som har jouren den här veckan — vecka ${isoWeekNumber(weekStart2)} är det ${duty.name}. Vill du boka ändå?`,
+        { title: "Inte din jourvecka", okText: "Ja, ta pass", primary: true });
+      if(!ok) return;
+    }
+  }
   const pass = schedCtx.passes.find(x=>x.id===passId); const cap = pass ? (pass.capacity||1) : 1;
   const cur = await db.from("booking").select("id").eq("pass_id", passId).eq("pass_date", dISO);
   if(!cur.error && cur.data.length >= cap){ await drawGrid(); return; }
@@ -594,7 +610,15 @@ async function bookCell(passId, dISO){
   if(r.error){ alert("Kunde inte boka: " + r.error.message); return; }
   await drawGrid(true);
 }
-async function cancelBooking(id){
+async function cancelBooking(id, info){
+  let txt = "Är du säker på att du vill ta bort ditt pass?";
+  if(info){
+    const j = info.lastIndexOf("|");
+    const pn = info.slice(0, j), pd = info.slice(j+1);
+    const d = new Date(pd + "T00:00:00");
+    txt = `Är du säker på att du vill ta bort ditt pass ${pn}, ${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}?`;
+  }
+  if(!(await confirmDialog(txt, { title: "Ta bort pass", okText: "Ja, ta bort" }))) return;
   const r = await db.from("booking").delete().eq("id", id);
   if(r.error){ alert("Kunde inte avboka: " + r.error.message); return; }
   await drawGrid(true);
