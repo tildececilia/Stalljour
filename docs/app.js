@@ -230,16 +230,18 @@ let focusProfileId = null;  // profil att öppna direkt (från Profil-menyn)
 
 async function reloadStableData(){
   const sid = stStableId;
-  const [g,c,p,pr] = await Promise.all([
+  const [g,c,p,pr,ad] = await Promise.all([
     db.from("duty_group").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("category").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("pass_def").select("*, category(name)").eq("stable_id", sid).order("sort_order"),
-    db.from("profile").select("id,name,remind1_min,remind2_min,profile_member(email),horse(id,name,group_id)").eq("stable_id", sid).order("created_at")
+    db.from("profile").select("id,name,remind1_min,remind2_min,profile_member(email),horse(id,name,group_id)").eq("stable_id", sid).order("created_at"),
+    db.from("stable_admin").select("email").eq("stable_id", sid)
   ]);
   const err = g.error || c.error || p.error || pr.error;
   if(err){ el("stTreeCard").innerHTML = msg("Kunde inte hämta stallets data: " + err.message, "err"); return; }
   curGroups = g.data; curCats = c.data;
-  stData = { groups: g.data, cats: c.data, passes: sortPassesByTime(p.data), profiles: pr.data };
+  stData = { groups: g.data, cats: c.data, passes: sortPassesByTime(p.data), profiles: pr.data,
+             admins: ad.error ? [] : (ad.data||[]).map(x=> (x.email||"").toLowerCase()) };
   if(focusProfileId){
     const fp = stData.profiles.find(x=> x.id === focusProfileId);
     if(fp){
@@ -281,12 +283,14 @@ function profileNode(p, groupId, keyPrefix){
   const may = curAdmin || mine;   // får redigera profilen (namn, mejl, hästar)
   const horses = (p.horse||[]).filter(h=> groupId===null ? !h.group_id : h.group_id===groupId);
   const out = [];
+  const isAdm = profileIsAdmin(p);
   if(may && p.id === editingProfileId){
     out.push(`<div class="editrow lvl2"><div class="editname"><input type="text" id="epr_name_${p.id}" value="${esc(p.name)}">
-      <button class="btn primary sm" data-s="profile:${p.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div></div>`);
+      <button class="btn primary sm" data-s="profile:${p.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div>
+      ${curAdmin?`<div class="editbtns" style="margin-top:10px"><button class="btn sm" data-mkadm="${p.id}">${isAdm?"Ta bort admin-behörighet":"Gör till admin"}</button></div>`:""}</div>`);
   } else {
     const pbtns = `<span class="tbtns">${curAdmin?`<button class="x" data-mv="${p.id}" title="Byt grupp">${ic("swap")}</button>`:""}${may?`<button class="x" data-e="profile:${p.id}" title="Ändra">${ic("pencil")}</button>`:""}${curAdmin?`<button class="x" data-d="profile:${p.id}" title="Ta bort">${ic("x")}</button>`:""}</span>`;
-    out.push(`<div class="trow lvl2" data-t="${key}">${ic("user")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${pbtns}</div>`);
+    out.push(`<div class="trow lvl2" data-t="${key}">${ic("user")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""}${isAdm?` <span class="tagpill">admin</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${pbtns}</div>`);
   }
   if(stOpen[key]){
     const mails = (p.profile_member||[]).map(m=>m.email).filter(Boolean);
@@ -406,6 +410,7 @@ function renderStableTree(){
   host.querySelectorAll("[data-add]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); doAdd(b.getAttribute("data-add")); });
   host.querySelectorAll("[data-mv]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); moveProfileDialog(b.getAttribute("data-mv")); });
   host.querySelectorAll("[data-gs]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); groupStatsDialog(b.getAttribute("data-gs")); });
+  host.querySelectorAll("[data-mkadm]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); toggleAdminForProfile(b.getAttribute("data-mkadm")); });
   host.querySelectorAll("[data-rem]").forEach(sel=> sel.onchange = async ()=>{
     const [slot, pid] = sel.getAttribute("data-rem").split(":");
     const upd = {}; upd["remind"+slot+"_min"] = sel.value ? parseInt(sel.value,10) : null;
@@ -414,6 +419,40 @@ function renderStableTree(){
     else refreshBellCount();
   });
   host.querySelectorAll(".addhorse, .editrow").forEach(n=> n.onclick=(e)=> e.stopPropagation());
+}
+
+/* Admin-behörighet per profil (via profilens mejladresser) */
+function profileIsAdmin(p){
+  const admins = (stData && stData.admins) || [];
+  return (p.profile_member||[]).some(m=> m.email && admins.includes(m.email.toLowerCase()));
+}
+async function toggleAdminForProfile(pid){
+  const p = stData.profiles.find(x=> x.id === pid); if(!p) return;
+  const mails = (p.profile_member||[]).map(m=> (m.email||"").toLowerCase()).filter(Boolean);
+  if(!mails.length){ infoDialog("Profilen har ingen mejladress kopplad än — lägg till en mejl först, det är mejlen som får admin-behörigheten.", "Ingen mejl"); return; }
+  const admins = stData.admins || [];
+  if(!profileIsAdmin(p)){
+    const ok = await confirmDialog(
+      `Vill du göra ${p.name} till admin? ${mails.length>1?"Profilens mejladresser":"Mejladressen"} (${mails.join(", ")}) får då full behörighet att ändra allt i stallet.`,
+      { title:"Gör till admin", okText:"Ja, gör till admin", primary:true });
+    if(!ok) return;
+    const newRows = mails.filter(m=> !admins.includes(m)).map(email=> ({ stable_id: stStableId, email }));
+    const r = await db.from("stable_admin").insert(newRows);
+    if(r.error){ alert("Kunde inte göra till admin: " + r.error.message); return; }
+  } else {
+    const remaining = admins.filter(a=> !mails.includes(a));
+    if(!remaining.length){ infoDialog("Det går inte — stallet måste ha minst en admin kvar.", "Stopp"); return; }
+    const includesMe = mails.includes(session.email);
+    const ok = await confirmDialog(
+      `Vill du ta bort admin-behörigheten för ${p.name} (${mails.join(", ")})?${includesMe ? " OBS: det inkluderar dig själv — du förlorar admin-åtkomsten direkt." : ""}`,
+      { title:"Ta bort admin" });
+    if(!ok) return;
+    const r = await db.from("stable_admin").delete().eq("stable_id", stStableId).in("email", mails);
+    if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
+    if(includesMe){ view = { name:"stable", stableId: stStableId }; render(); return; }
+  }
+  editingProfileId = null;
+  await reloadStableData();
 }
 
 /* Gruppstatistik: bokade pass per profil och kategori, rättvist per häst */
