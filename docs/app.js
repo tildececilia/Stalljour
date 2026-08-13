@@ -68,6 +68,7 @@ const ICONS = {
   message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   swap: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  chart: '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
   menu: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
   pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
@@ -225,6 +226,7 @@ async function amIAdmin(stableId){
 let stOpen = {};        // vilka noder i trädet som är öppna
 let stStableId = null;
 let stData = null;      // {groups, cats, passes, profiles}
+let focusProfileId = null;  // profil att öppna direkt (från Profil-menyn)
 
 async function reloadStableData(){
   const sid = stStableId;
@@ -238,6 +240,15 @@ async function reloadStableData(){
   if(err){ el("stTreeCard").innerHTML = msg("Kunde inte hämta stallets data: " + err.message, "err"); return; }
   curGroups = g.data; curCats = c.data;
   stData = { groups: g.data, cats: c.data, passes: sortPassesByTime(p.data), profiles: pr.data };
+  if(focusProfileId){
+    const fp = stData.profiles.find(x=> x.id === focusProfileId);
+    if(fp){
+      stOpen.grupper = true;
+      (fp.horse||[]).forEach(h=>{ if(h.group_id){ stOpen["g_"+h.group_id] = true; stOpen[`p_${h.group_id}_${fp.id}`] = true; } });
+      if(!(fp.horse||[]).length || (fp.horse||[]).some(h=> !h.group_id)){ stOpen.g_none = true; stOpen[`p_none_${fp.id}`] = true; }
+    }
+    focusProfileId = null;
+  }
   renderStableTree();
 }
 
@@ -305,7 +316,8 @@ function groupNode(g){
     out.push(`<div class="editrow lvl1"><div class="editname"><input type="text" id="eg_name_${g.id}" value="${esc(g.name)}">
       <button class="btn primary sm" data-s="group:${g.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div></div>`);
   } else {
-    out.push(`<div class="trow lvl1" data-t="${key}"><span class="cdot" style="background:${g.color||'#4e9e6e'}"></span>${esc(g.name)} ${caret(key)}${tbtns("group",g.id)}</div>`);
+    const gbtns = `<span class="tbtns"><button class="x" data-gs="${g.id}" title="Statistik">${ic("chart")}</button>${curAdmin?`<button class="x" data-e="group:${g.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-d="group:${g.id}" title="Ta bort">${ic("x")}</button>`:""}</span>`;
+    out.push(`<div class="trow lvl1" data-t="${key}"><span class="cdot" style="background:${g.color||'#4e9e6e'}"></span>${esc(g.name)} ${caret(key)}${gbtns}</div>`);
   }
   if(stOpen[key]){
     const profs = stData.profiles.filter(p=> (p.horse||[]).some(h=> h.group_id===g.id));
@@ -393,6 +405,7 @@ function renderStableTree(){
   host.querySelectorAll("[data-c]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); cancelEdit(); });
   host.querySelectorAll("[data-add]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); doAdd(b.getAttribute("data-add")); });
   host.querySelectorAll("[data-mv]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); moveProfileDialog(b.getAttribute("data-mv")); });
+  host.querySelectorAll("[data-gs]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); groupStatsDialog(b.getAttribute("data-gs")); });
   host.querySelectorAll("[data-rem]").forEach(sel=> sel.onchange = async ()=>{
     const [slot, pid] = sel.getAttribute("data-rem").split(":");
     const upd = {}; upd["remind"+slot+"_min"] = sel.value ? parseInt(sel.value,10) : null;
@@ -401,6 +414,55 @@ function renderStableTree(){
     else refreshBellCount();
   });
   host.querySelectorAll(".addhorse, .editrow").forEach(n=> n.onclick=(e)=> e.stopPropagation());
+}
+
+/* Gruppstatistik: bokade pass per profil och kategori, rättvist per häst */
+async function groupStatsDialog(gid){
+  const g = stData.groups.find(x=> x.id === gid); if(!g) return;
+  const profs = stData.profiles
+    .map(p=> ({ p, n: (p.horse||[]).filter(h=> h.group_id === gid).length }))
+    .filter(x=> x.n > 0);
+  if(!profs.length){ infoDialog("Inga hästar i gruppen än.", "Statistik"); return; }
+  const b = await db.from("booking").select("profile_id,pass_def(category_id)").eq("stable_id", stStableId);
+  if(b.error){ alert("Kunde inte hämta statistik: " + b.error.message); return; }
+  const counts = {}; profs.forEach(x=> counts[x.p.id] = {});
+  const catKeys = new Set();
+  (b.data||[]).forEach(bk=>{
+    if(!(bk.profile_id in counts)) return;
+    const k = (bk.pass_def && bk.pass_def.category_id) || "none";
+    catKeys.add(k);
+    counts[bk.profile_id][k] = (counts[bk.profile_id][k]||0) + 1;
+  });
+  const fmt1 = v => (Math.round(v*10)/10).toString().replace(".", ",");
+  let html = "";
+  if(!catKeys.size){
+    html = `<div class="empty">Inga bokade pass än i den här gruppen.</div>`;
+  } else {
+    // sortera kategorierna i stallets ordning, "Övrigt" sist
+    const order = [...stData.cats.map(c=> c.id), "none"].filter(k=> catKeys.has(k));
+    order.forEach(k=>{
+      const name = k === "none" ? "Utan kategori" : ((stData.cats.find(c=> c.id === k)||{}).name || "Övrigt");
+      const rows = profs.map(x=>{ const n = counts[x.p.id][k] || 0; return { name: x.p.name, horses: x.n, n, ph: n / x.n }; })
+        .sort((a,c)=> c.ph - a.ph);
+      const sum = rows.reduce((a,r)=> a + r.ph, 0);
+      html += `<div class="sublabel">${esc(name)}</div>` + rows.map(r=>{
+        const pct = sum > 0 ? Math.round(100 * r.ph / sum) : 0;
+        return `<div class="statline">
+          <div class="statmeta"><b>${esc(r.name)}</b><span class="meta2">${r.horses>1?`${r.horses} hästar · `:""}${r.n} st · ${fmt1(r.ph)}/häst · ${pct}%</span></div>
+          <div class="statbar"><div style="width:${pct}%"></div></div>
+        </div>`;
+      }).join("");
+    });
+  }
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  ov.innerHTML = `<div class="modal statsmodal"><h3>${ic("chart")} ${esc(g.name)} – statistik</h3>
+    <p>Alla bokade pass (även kommande). Har en profil flera hästar i gruppen jämförs snittet per häst.</p>
+    ${html}
+    <div class="modal-btns" style="margin-top:16px"><button class="btn" id="stClose">Stäng</button></div></div>`;
+  document.body.appendChild(ov);
+  const done = ()=> ov.remove();
+  ov.querySelector("#stClose").onclick = done;
+  ov.onclick = (e)=>{ if(e.target === ov) done(); };
 }
 
 /* Byt grupp: flytta en profils hästar till en annan grupp (admin) */
@@ -820,7 +882,7 @@ function buildProfileMenu(){
         if(pmState.profilesOpen){
           if(!pmState.myProfiles) tree += `<div class="menuhead sub">Laddar…</div>`;
           else if(!pmState.myProfiles.length) tree += `<div class="pmleaf muted">Inga profiler kopplade till din mejl</div>`;
-          else pmState.myProfiles.forEach(p=> tree += `<div class="pmleaf">• ${esc(p.name)}</div>`);
+          else pmState.myProfiles.forEach(p=> tree += `<button class="menuitem" style="padding-left:48px" data-pmgoto="${p.id}">${esc(p.name)} <span class="caret">›</span></button>`);
         }
       }
     });
@@ -863,6 +925,14 @@ function buildProfileMenu(){
     pmState.openStableId = pmState.openStableId === id ? null : id;
     pmState.profilesOpen = false; pmState.myProfiles = null;
     buildProfileMenu();
+  });
+  m.querySelectorAll("[data-pmgoto]").forEach(b=> b.onclick = (e)=>{
+    e.stopPropagation();
+    focusProfileId = b.getAttribute("data-pmgoto");
+    const sid = pmState.openStableId;
+    closeMenus();
+    view = { name:"stable", stableId: sid };
+    render();
   });
 }
 async function profileAction(act){

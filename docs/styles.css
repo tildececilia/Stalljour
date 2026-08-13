@@ -219,6 +219,11 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 .chatinput input{flex:1}
 label.chk{display:flex;align-items:center;gap:9px;font-size:.93rem;padding:7px 4px;cursor:pointer}
 label.chk input{accent-color:var(--accent);width:17px;height:17px}
+.statsmodal{max-height:82vh;overflow-y:auto}
+.statline{margin:7px 0}
+.statmeta{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:.9rem;margin-bottom:3px}
+.statbar{height:8px;border-radius:999px;background:var(--card-2);overflow:hidden}
+.statbar div{height:100%;background:var(--accent);border-radius:999px}
 .mobonly{display:none}
 
 /* Mobil: hamburgermeny — bara logga, klocka och ☰ i headern */
