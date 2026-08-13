@@ -195,6 +195,20 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 .schedname{font-family:var(--font-head);font-weight:700;font-size:1.7rem;letter-spacing:-.01em;line-height:1.1;margin:2px 0 12px}
 .schedtop{text-align:center}
 
+/* Notiser & byt pass */
+.bellbtn{position:relative}
+.badge{position:absolute;top:-4px;right:-4px;background:#d03b3b;color:#fff;border-radius:999px;
+  font-size:.65rem;font-weight:700;min-width:16px;height:16px;padding:0 4px;
+  display:flex;align-items:center;justify-content:center;line-height:1}
+.bellmenu{min-width:270px}
+.notif{padding:11px 13px;border-top:1px solid var(--line);font-size:.9rem}
+.notif:first-child{border-top:none}
+.notif b{font-weight:700}
+.notifbtns{display:flex;gap:8px;margin-top:9px}
+.schip.clickable{cursor:pointer}
+.schip.clickable:hover{filter:brightness(.95)}
+.btn.block{display:block;width:100%;text-align:left}
+
 /* Mobil: ikon-knappar i headern så allt får plats */
 @media (max-width:640px){
   header.app{gap:6px;padding:10px 12px}

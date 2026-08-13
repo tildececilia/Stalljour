@@ -64,6 +64,7 @@ const ICONS = {
   clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1"/>',
   mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 };
@@ -564,7 +565,8 @@ async function drawGrid(keepScroll){
   if(keepScroll) window.scrollTo(0, scrollY);
 
   host.querySelectorAll("[data-book]").forEach(btn=> btn.onclick = ()=> bookCell(btn.getAttribute("data-book"), btn.getAttribute("data-date")));
-  host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = ()=> cancelBooking(btn.getAttribute("data-cancel"), btn.getAttribute("data-cinfo")));
+  host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = (e)=>{ e.stopPropagation(); cancelBooking(btn.getAttribute("data-cancel"), btn.getAttribute("data-cinfo")); });
+  host.querySelectorAll("[data-req]").forEach(chip=> chip.onclick = ()=> onChipClick(chip.getAttribute("data-req"), chip.getAttribute("data-pinfo")));
 }
 
 function scheduleCell(p, d, dISO, map, myIds, tISO){
@@ -577,7 +579,9 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
   const canBook = schedCtx.actingProfileId && !full && !isPast;
   const chips = list.map(bk=>{
     const mine = myIds.has(bk.profile_id);
-    return `<span class="schip">${esc((bk.profile&&bk.profile.name)||"?")}${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
+    const canReq = !isPast && schedCtx.actingProfileId;
+    const reqAttrs = canReq ? ` data-req="${bk.id}|${bk.profile_id}|${mine?1:0}" data-pinfo="${esc(p.name)}|${dISO}"` : "";
+    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}">${esc((bk.profile&&bk.profile.name)||"?")}${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
   }).join("");
   const empty = (!list.length && !canBook) ? `<span class="sempty">–</span>` : "";
   const badge = cap>1 ? `<span class="scap ${full?"ok":"need"}">${list.length}/${cap}</span>` : "";
@@ -717,9 +721,10 @@ function updateHeader(){
   el("btnProfile").style.display  = session ? "" : "none";
   el("btnSchedule").style.display = session ? "" : "none";
   el("btnSettings").style.display = session ? "" : "none";
+  el("btnBell").style.display     = session ? "" : "none";
 }
 
-function closeMenus(){ el("profileMenu").classList.remove("open"); el("scheduleMenu").classList.remove("open"); }
+function closeMenus(){ el("profileMenu").classList.remove("open"); el("scheduleMenu").classList.remove("open"); el("bellMenu").classList.remove("open"); }
 function closeProfileMenu(){ closeMenus(); }
 
 let pmState = null;   // utfällnings-läge för profil-menyn
@@ -848,10 +853,145 @@ el("btnSchedule").onclick = (e)=>{
   if(!wasOpen) openScheduleMenu();
 };
 
+/* ============ Notiser & byt pass ============ */
+let myProfileIds = new Set();   // alla profil-id kopplade till min mejl
+
+async function refreshMyProfiles(){
+  if(!session){ myProfileIds = new Set(); return; }
+  const r = await db.from("profile_member").select("profile_id").eq("email", session.email);
+  if(!r.error) myProfileIds = new Set((r.data||[]).map(x=> x.profile_id));
+}
+
+async function refreshBellCount(){
+  const b = el("bellBadge"); if(!b) return;
+  if(!session){ b.style.display = "none"; return; }
+  if(!myProfileIds.size) await refreshMyProfiles();
+  const r = await db.from("pass_request").select("id,to_profile").eq("status","pending");
+  const n = r.error ? 0 : (r.data||[]).filter(x=> myProfileIds.has(x.to_profile)).length;
+  if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
+}
+setInterval(()=>{ if(session) refreshBellCount(); }, 60000);
+
+async function openBellMenu(){
+  const m = el("bellMenu");
+  m.innerHTML = `<div class="menuhead sub">Laddar…</div>`;
+  m.classList.add("open");
+  await refreshMyProfiles();
+  const r = await db.from("pass_request")
+    .select("id,type,to_profile,booking(pass_date,pass_def(name)),fromP:profile!pass_request_from_profile_fkey(name)")
+    .eq("status","pending").order("created_at",{ascending:false});
+  if(r.error){ m.innerHTML = `<div class="menuhead sub">Kunde inte hämta notiser</div>`; return; }
+  const mine = (r.data||[]).filter(x=> myProfileIds.has(x.to_profile));
+  if(!mine.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  m.innerHTML = mine.map(q=>{
+    const bk = q.booking || {};
+    const pn = (bk.pass_def && bk.pass_def.name) || "pass";
+    const d = bk.pass_date ? new Date(bk.pass_date + "T00:00:00") : null;
+    const when = d ? `v.${isoWeekNumber(d)} · ${DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1}` : "";
+    const who = (q.fromP && q.fromP.name) || "Någon";
+    const txt = q.type === "take"
+      ? `<b>${esc(who)}</b> vill ta över ditt pass`
+      : `<b>${esc(who)}</b> vill ge dig sitt pass`;
+    return `<div class="notif"><div>${txt}</div><div class="meta2">${esc(pn)} · ${esc(when)}</div>
+      <div class="notifbtns"><button class="btn primary sm" data-acc="${q.id}">Bekräfta</button><button class="btn sm" data-dec="${q.id}">Avböj</button></div></div>`;
+  }).join("");
+  m.querySelectorAll("[data-acc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveRequest(b.getAttribute("data-acc"), true); });
+  m.querySelectorAll("[data-dec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveRequest(b.getAttribute("data-dec"), false); });
+}
+async function resolveRequest(id, accept){
+  const r = await db.rpc("resolve_pass_request", { p_request: id, p_accept: accept });
+  if(r.error){ alert(r.error.message); return; }
+  await refreshBellCount();
+  await openBellMenu();
+  if(view.name === "schedule" && schedCtx) drawGrid(true);
+}
+el("btnBell").onclick = (e)=>{
+  e.stopPropagation();
+  const m = el("bellMenu");
+  const wasOpen = m.classList.contains("open");
+  closeMenus();
+  if(!wasOpen) openBellMenu();
+};
+
+function infoDialog(text, title){
+  return new Promise(res=>{
+    const ov = document.createElement("div"); ov.className = "modal-ov";
+    ov.innerHTML = `<div class="modal"><h3>${esc(title||"Klart")}</h3><p>${esc(text)}</p>
+      <div class="modal-btns"><button class="btn primary" id="mOk2">Ok</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = ()=>{ ov.remove(); res(); };
+    ov.querySelector("#mOk2").onclick = done;
+    ov.onclick = (e)=>{ if(e.target===ov) done(); };
+  });
+}
+
+// Välj mottagare: först grupp, sen profil i gruppen
+function chooseProfileDialog(excludeId){
+  return new Promise(res=>{
+    const groups = schedCtx.groups, profs = schedCtx.profiles || [];
+    const meP = profs.find(p=> p.id === schedCtx.actingProfileId);
+    const myGroupIds = new Set(((meP && meP.horse) || []).map(h=> h.group_id).filter(Boolean));
+    const ov = document.createElement("div"); ov.className = "modal-ov";
+    const box = document.createElement("div"); box.className = "modal"; ov.appendChild(box);
+    document.body.appendChild(ov);
+    const done = v =>{ ov.remove(); res(v); };
+    ov.onclick = (e)=>{ if(e.target===ov) done(null); };
+    function stepGroups(){
+      box.innerHTML = `<h3>Ge bort till vem?</h3><p>Välj grupp:</p>
+        <div class="stack">${groups.map(g=>`<button class="btn block" data-g="${g.id}">${esc(g.name)}${myGroupIds.has(g.id)?" · din grupp":""}</button>`).join("")}</div>
+        <div class="modal-btns" style="margin-top:14px"><button class="btn" id="cAbort">Avbryt</button></div>`;
+      box.querySelector("#cAbort").onclick = ()=> done(null);
+      box.querySelectorAll("[data-g]").forEach(b=> b.onclick = ()=> stepProfiles(b.getAttribute("data-g")));
+    }
+    function stepProfiles(gid){
+      const g = groups.find(x=> x.id === gid);
+      const list = profs.filter(p=> p.id !== excludeId && (p.horse||[]).some(h=> h.group_id === gid));
+      box.innerHTML = `<h3>${esc(g ? g.name : "")}</h3><p>Välj profil att skicka förfrågan till:</p>
+        <div class="stack">${list.length ? list.map(p=>`<button class="btn block" data-p="${p.id}">${esc(p.name)}</button>`).join("") : `<div class="meta2">Inga profiler i den här gruppen.</div>`}</div>
+        <div class="modal-btns" style="margin-top:14px"><button class="btn" id="cBack">‹ Tillbaka</button><button class="btn" id="cAbort2">Avbryt</button></div>`;
+      box.querySelector("#cBack").onclick = stepGroups;
+      box.querySelector("#cAbort2").onclick = ()=> done(null);
+      box.querySelectorAll("[data-p]").forEach(b=> b.onclick = ()=> done(b.getAttribute("data-p")));
+    }
+    stepGroups();
+  });
+}
+
+async function onChipClick(req, pinfo){
+  if(!schedCtx.actingProfileId) return;
+  const parts = req.split("|"); const bid = parts[0], ownerId = parts[1], mineFlag = parts[2];
+  const j = pinfo.lastIndexOf("|"); const pn = pinfo.slice(0, j), pd = pinfo.slice(j+1);
+  if(pd < isoDate(new Date())) return;   // inga byten bakåt i tiden
+  const d = new Date(pd + "T00:00:00");
+  const label = `${pn}, ${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}`;
+  if(mineFlag === "1"){
+    const ok = await confirmDialog(`Vill du ge bort ditt pass ${label}?`, { title:"Ge bort pass", okText:"Ja", primary:true });
+    if(!ok) return;
+    const target = await chooseProfileDialog(ownerId);
+    if(!target) return;
+    await sendPassRequest("give", bid, ownerId, target, label);
+  } else {
+    const owner = (schedCtx.profiles||[]).find(p=> p.id === ownerId);
+    const ok = await confirmDialog(`Vill du skicka en förfrågan till ${owner ? owner.name : "ägaren"} om att ta över passet ${label}?`, { title:"Ta över pass", okText:"Ja, skicka", primary:true });
+    if(!ok) return;
+    await sendPassRequest("take", bid, schedCtx.actingProfileId, ownerId, label);
+  }
+}
+
+async function sendPassRequest(type, bookingId, fromP, toP, label){
+  if(fromP === toP) return;
+  const dup = await db.from("pass_request").select("id").eq("booking_id", bookingId).eq("status","pending");
+  if(!dup.error && (dup.data||[]).length){ await infoDialog("Det finns redan en väntande förfrågan på det här passet.", "Redan skickad"); return; }
+  const r = await db.from("pass_request").insert({ stable_id: schedCtx.stable.id, booking_id: bookingId, type, from_profile: fromP, to_profile: toP });
+  if(r.error){ alert("Kunde inte skicka förfrågan: " + r.error.message); return; }
+  const toName = ((schedCtx.profiles||[]).find(p=> p.id === toP) || {}).name || "profilen";
+  await infoDialog(`Din förfrågan om passet ${label} har skickats till ${toName}. De får en notis och kan bekräfta eller avböja.`, "Förfrågan skickad");
+}
+
 /* ============ Ikoner i headern ============ */
 document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
 
 /* ============ Start ============ */
 function setSessionFrom(s){ session = s ? { id: s.user.id, email: normEmail(s.user.email) } : null; }
-db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); });
-db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); });
+db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session) refreshMyProfiles().then(refreshBellCount); });
+db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session) refreshMyProfiles().then(refreshBellCount); });
