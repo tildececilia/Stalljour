@@ -153,9 +153,10 @@ async function renderHome(){
       <div id="stableList" class="list"><div class="empty">Laddar…</div></div>
     </div>
     <div class="card">
-      <p class="sub" style="margin:0 0 12px">Starta ett nytt stall — du blir admin och kan lägga till profiler.</p>
-      <div class="field"><input type="text" id="newStable" placeholder="Stallets namn, t.ex. RHC"></div>
-      <button class="btn primary block" id="createStableBtn">Skapa nytt stall</button>
+      <p class="sub" style="margin:0 0 12px">Starta ett nytt stall eller en ridskola — du blir admin.</p>
+      <div class="field"><input type="text" id="newStable" placeholder="Namn, t.ex. RHC"></div>
+      <div class="field"><select id="newStableKind"><option value="stall">Stall (jourpass)</option><option value="ridskola">Ridskola (lektioner)</option></select></div>
+      <button class="btn primary block" id="createStableBtn">Skapa</button>
       <div id="homeMsg" style="margin-top:12px"></div>
     </div>`;
   el("createStableBtn").onclick = createStable;
@@ -174,7 +175,8 @@ async function renderHome(){
     if(!stables.length){ list.innerHTML = `<div class="empty">Du är inte med i något stall än. Skapa ett nedan, eller be en admin lägga in din mejl på en profil.</div>`; return; }
     list.innerHTML = stables.map(s=>`
       <button class="row" data-open="${s.id}">
-        <div class="grow"><div class="nm">${esc(s.name)}</div><div class="meta">${s.isAdmin?"Admin":"Medlem"}</div></div>
+        <div class="grow"><div class="nm">${esc(s.name)}</div><div class="meta">${s.kind==="ridskola"?"Ridskola · ":""}${s.isAdmin?"Admin":"Medlem"}</div></div>
+        ${s.kind==="ridskola"?`<span class="tagpill">ridskola</span>`:""}
         <span class="chev">›</span>
       </button>`).join("");
     list.querySelectorAll("[data-open]").forEach(b=> b.onclick = ()=>{ view={name:"stable",stableId:b.getAttribute("data-open")}; render(); });
@@ -185,7 +187,7 @@ async function renderHome(){
 
 async function loadMyStables(){
   const map = new Map();
-  // stall där jag är admin
+  // stall/ridskolor där jag är admin
   const admin = await db.from("stable_admin").select("stable(*)").eq("email", session.email);
   if(admin.error) throw admin.error;
   admin.data.forEach(r=>{ if(r.stable) map.set(r.stable.id, { ...r.stable, isAdmin:true }); });
@@ -193,6 +195,9 @@ async function loadMyStables(){
   const mem = await db.from("profile_member").select("profile(stable(*))").eq("email", session.email);
   if(mem.error) throw mem.error;
   mem.data.forEach(r=>{ const s=r.profile && r.profile.stable; if(s && !map.has(s.id)) map.set(s.id, { ...s, isAdmin:false }); });
+  // ridskolor där jag är med via en elev
+  const sm = await db.from("rs_student_member").select("rs_student(stable(*))").eq("email", session.email);
+  if(!sm.error) (sm.data||[]).forEach(r=>{ const s=r.rs_student && r.rs_student.stable; if(s && !map.has(s.id)) map.set(s.id, { ...s, isAdmin:false }); });
   return [...map.values()];
 }
 
@@ -202,7 +207,8 @@ async function createStable(){
   if(!name){ mEl.innerHTML = msg("Ge stallet ett namn.", "err"); return; }
   const btn = el("createStableBtn"); btn.classList.add("spin"); btn.textContent="…";
   try{
-    const { data, error } = await db.rpc("create_stable", { p_name: name });
+    const kindEl = el("newStableKind");
+    const { data, error } = await db.rpc("create_stable", { p_name: name, p_kind: kindEl ? kindEl.value : "stall" });
     if(error) throw error;
     view = { name:"stable", stableId: data };
     render();
@@ -214,6 +220,8 @@ async function createStable(){
 
 /* ============ Stall-vy – profiler ============ */
 async function renderStable(stableId){
+  const kindQ = await db.from("stable").select("kind").eq("id", stableId).single();
+  if(!kindQ.error && kindQ.data && kindQ.data.kind === "ridskola"){ renderSchool(stableId); return; }
   editingPassId = editingHorseId = editingGroupId = editingCatId = editingProfileId = null;
   stOpen = {};
   stStableId = stableId;
@@ -657,6 +665,8 @@ async function doAdd(spec){
 const DAYLBL = { all:"Alla dagar", weekday:"Vardagar", weekend:"Helg", weekdays:"Valda dagar" };
 /* ============ Schema-vy ============ */
 async function renderSchedule(stableId){
+  const kindQ = await db.from("stable").select("kind").eq("id", stableId).single();
+  if(!kindQ.error && kindQ.data && kindQ.data.kind === "ridskola"){ renderSchoolSchedule(stableId); return; }
   appEl.innerHTML = `<button class="backlink" id="backSch">‹ Tillbaka till stallet</button><div id="schShell"><div class="card"><div class="empty">Laddar schema…</div></div></div>`;
   el("backSch").onclick = ()=>{ view={name:"stable",stableId}; render(); };
   try{
@@ -1325,6 +1335,11 @@ document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute
 async function renderMyPasses(stableId){
   appEl.innerHTML = `<div id="mineShell"><div class="card"><div class="empty">Laddar…</div></div></div>`;
   try{
+    const kq = await db.from("stable").select("kind").eq("id", stableId).single();
+    if(!kq.error && kq.data && kq.data.kind === "ridskola"){
+      el("mineShell").innerHTML = `<div class="card"><div class="empty">"Mina lektioner" för ridskolor kommer i nästa steg — öppna schemat så länge.</div></div>`;
+      return;
+    }
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
     const g  = await db.from("duty_group").select("*").eq("stable_id", stableId).order("sort_order"); if(g.error) throw g.error;
     const pr = await db.from("profile").select("id,name,profile_member(email),horse(group_id)").eq("stable_id", stableId); if(pr.error) throw pr.error;
@@ -1485,6 +1500,10 @@ async function renderChat(stableId){
   appEl.innerHTML = `<div id="chatShell"><div class="card"><div class="empty">Laddar chatt…</div></div></div>`;
   try{
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    if(st.data.kind === "ridskola"){
+      el("chatShell").innerHTML = `<div class="card"><div class="empty">Chatt för ridskolor kommer i nästa steg.</div></div>`;
+      return;
+    }
     const g  = await db.from("duty_group").select("*").eq("stable_id", stableId).order("sort_order"); if(g.error) throw g.error;
     const pr = await db.from("profile").select("id,name,profile_member(email),horse(group_id)").eq("stable_id", stableId).order("created_at"); if(pr.error) throw pr.error;
     const myIds = pr.data.filter(p=> (p.profile_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(p=> p.id);
@@ -1620,6 +1639,366 @@ async function renderChatMembers(gid){
     if(r.error){ alert("Kunde inte bjuda in: " + r.error.message); return; }
     renderChatMembers(gid);
   };
+}
+
+/* ============ RIDSKOLA ============ */
+let scOpen = {};
+let scData = null;
+let scStableId = null;
+const RS_WD = [null,"Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"];
+const RS_DUR = [30,45,60,75,90,120];
+
+function rsMyStudentIds(){
+  return new Set((scData.students||[]).filter(s=> (s.rs_student_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(s=> s.id));
+}
+function rsEndTime(start, dur){
+  const m = /^(\d{1,2}):(\d{2})/.exec(start||""); if(!m) return "";
+  const t = (+m[1])*60 + (+m[2]) + (dur||0);
+  return String(Math.floor(t/60)%24).padStart(2,"0") + ":" + String(t%60).padStart(2,"0");
+}
+
+async function renderSchool(stableId){
+  scStableId = stableId; scOpen = {};
+  appEl.innerHTML = `
+    <button class="backlink" id="scBack">‹ Mina stall</button>
+    <div class="card schedtop"><div id="scHead"><h1 class="title">Laddar…</h1></div></div>
+    <div class="card" id="scTreeCard"><div class="empty">Laddar…</div></div>`;
+  el("scBack").onclick = ()=>{ view={name:"home",stableId:null}; render(); };
+  try{
+    const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    curAdmin = await amIAdmin(stableId);
+    el("scHead").innerHTML = `<div class="schedeyebrow">Inställningar · Ridskola</div><h1 class="schedname">${esc(st.data.name)}</h1>
+      <p class="sub" style="margin:0">${curAdmin ? '<span class="pill">Admin</span>' : '<span class="muted">Medlem</span>'}</p>`;
+    scData = { stable: st.data };
+    await reloadSchool();
+  }catch(e){ el("scHead").innerHTML = msg("Kunde inte öppna ridskolan: " + (e.message||e), "err"); }
+}
+
+async function reloadSchool(){
+  const sid = scStableId;
+  const [g,c,s,h,l,gs] = await Promise.all([
+    db.from("rs_group").select("*, category(name)").eq("stable_id", sid).order("weekday").order("start_time"),
+    db.from("category").select("*").eq("stable_id", sid).order("sort_order"),
+    db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", sid).order("name"),
+    db.from("rs_horse").select("*").eq("stable_id", sid).order("name"),
+    db.from("rs_leader").select("*"),
+    db.from("rs_group_student").select("*")
+  ]);
+  const err = g.error || c.error || s.error || h.error;
+  if(err){ el("scTreeCard").innerHTML = msg("Kunde inte hämta data: " + err.message + " (har du kört db/ridskola.sql?)", "err"); return; }
+  scData = { stable: scData.stable, groups: g.data, cats: c.data, students: s.data, horses: h.data,
+             leaders: l.error?[]:l.data, gstud: gs.error?[]:gs.data };
+  renderSchoolTree();
+}
+
+function scCaret(k){ return `<span class="caret">${scOpen[k]?"▾":"▸"}</span>`; }
+function scGroupMeta(g){
+  const cat = g.category && g.category.name;
+  const n = scData.gstud.filter(x=> x.group_id === g.id).length;
+  return `${RS_WD[g.weekday]||"?"} ${g.start_time}–${rsEndTime(g.start_time, g.duration_min)} · ${n}/${g.capacity} elever · häst byts efter ${g.horse_rotation} ggr${cat?` · ${cat}`:""}`;
+}
+
+function renderSchoolTree(){
+  const host = el("scTreeCard"); if(!host || !scData.groups) return;
+  const myStud = rsMyStudentIds();
+  const t = [];
+  // GRUPPER
+  t.push(`<div class="trow lvl0" data-t="grupper">${ic("users")} Grupper ${scCaret("grupper")}</div>`);
+  if(scOpen.grupper){
+    scData.groups.forEach(g=>{
+      const key = "g_"+g.id;
+      const hu = null;
+      if(curAdmin && scOpen["edit_"+g.id]){
+        const catO = `<option value="">Ingen kategori</option>` + scData.cats.map(c=>`<option value="${c.id}"${c.id===g.category_id?" selected":""}>${esc(c.name)}</option>`).join("");
+        const wdO = [1,2,3,4,5,6,7].map(w=>`<option value="${w}"${w===g.weekday?" selected":""}>${RS_WD[w]}</option>`).join("");
+        const tO = TIME_OPTIONS.map(x=>`<option value="${x}"${x===g.start_time?" selected":""}>${x}</option>`).join("");
+        const dO = RS_DUR.map(d=>`<option value="${d}"${d===g.duration_min?" selected":""}>${d} min</option>`).join("");
+        const capO = (()=>{let o="";for(let i=1;i<=20;i++)o+=`<option value="${i}"${i===g.capacity?" selected":""}>${i}</option>`;return o;})();
+        const rotO = (()=>{let o="";for(let i=1;i<=10;i++)o+=`<option value="${i}"${i===g.horse_rotation?" selected":""}>${i} gång${i>1?"er":""}</option>`;return o;})();
+        t.push(`<div class="editrow lvl1">
+          <div class="field"><label class="fld">Namn</label><input type="text" id="scg_name_${g.id}" value="${esc(g.name)}"></div>
+          <div class="field"><label class="fld">Kategori</label><select id="scg_cat_${g.id}">${catO}</select></div>
+          <div class="field"><label class="fld">Veckodag</label><select id="scg_wd_${g.id}">${wdO}</select></div>
+          <div class="field"><label class="fld">Starttid</label><select id="scg_time_${g.id}">${tO}</select></div>
+          <div class="field"><label class="fld">Längd</label><select id="scg_dur_${g.id}">${dO}</select></div>
+          <div class="field"><label class="fld">Antal platser</label><select id="scg_cap_${g.id}">${capO}</select></div>
+          <div class="field"><label class="fld">Hästbyte efter</label><select id="scg_rot_${g.id}">${rotO}</select></div>
+          <div class="editbtns"><button class="btn primary sm" data-scs="group:${g.id}">Spara</button><button class="btn sm" data-scc="${g.id}">Avbryt</button></div>
+        </div>`);
+      } else {
+        const btns = curAdmin ? `<span class="tbtns"><button class="x" data-sce="${g.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="group:${g.id}" title="Ta bort">${ic("x")}</button></span>` : "";
+        t.push(`<div class="trow lvl1" data-t="${key}">${esc(g.name)} ${scCaret(key)}${btns}</div>`);
+        t.push(`<div class="tleaf lvl2 tmuted">${esc(scGroupMeta(g))}</div>`);
+      }
+      if(scOpen[key]){
+        const leaders = scData.leaders.filter(x=> x.group_id === g.id);
+        t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Ledare</div>`);
+        leaders.forEach(ld=> t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(ld.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="leader:${ld.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+        if(!leaders.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen ledare än</div>`);
+        if(curAdmin) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_leader_${g.id}" placeholder="Ledarens namn"><button class="btn sm" data-sca="leader:${g.id}">+ Ledare</button></div>`);
+        const inGroup = scData.gstud.filter(x=> x.group_id === g.id).map(x=> x.student_id);
+        t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Elever (${inGroup.length}/${g.capacity})</div>`);
+        inGroup.forEach(sid=>{
+          const s = scData.students.find(x=> x.id === sid); if(!s) return;
+          t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(s.name)}${myStud.has(s.id)?` <span class="tagpill">din</span>`:""}${curAdmin?`<span class="tbtns"><button class="x" data-scd="gstud:${g.id}|${s.id}" title="Ta bort ur gruppen">${ic("x")}</button></span>`:""}</div>`);
+        });
+        if(curAdmin){
+          const free = scData.students.filter(s=> !inGroup.includes(s.id));
+          if(free.length) t.push(`<div class="addhorse lvl2"><select id="scin_gstud_${g.id}">${free.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select><button class="btn sm" data-sca="gstud:${g.id}">+ Elev</button></div>`);
+        }
+      }
+    });
+    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_group" placeholder="Ny grupp, t.ex. Nybörjare måndag"><button class="btn sm" data-sca="group">+ Grupp</button></div>`);
+  }
+  // KATEGORIER
+  t.push(`<div class="trow lvl0" data-t="kats">${ic("tag")} Kategorier ${scCaret("kats")}</div>`);
+  if(scOpen.kats){
+    scData.cats.forEach(c=> t.push(`<div class="tleaf lvl1">${ic("tag")} ${esc(c.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="cat:${c.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+    if(!scData.cats.length) t.push(`<div class="tleaf lvl1 tmuted">Inga kategorier än — t.ex. Nybörjare, Hopp, Dressyr</div>`);
+    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_cat" placeholder="Ny kategori"><button class="btn sm" data-sca="cat">+ Kategori</button></div>`);
+  }
+  // HÄSTAR
+  t.push(`<div class="trow lvl0" data-t="hastar">${ic("home")} Hästar ${scCaret("hastar")}</div>`);
+  if(scOpen.hastar){
+    scData.horses.forEach(h=> t.push(`<div class="tleaf lvl1">${esc(h.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="horse:${h.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+    if(!scData.horses.length) t.push(`<div class="tleaf lvl1 tmuted">Inga hästar än</div>`);
+    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_horse" placeholder="Hästens namn"><button class="btn sm" data-sca="horse">+ Häst</button></div>`);
+  }
+  // ELEVER
+  t.push(`<div class="trow lvl0" data-t="elever">${ic("user")} Elever ${scCaret("elever")}</div>`);
+  if(scOpen.elever){
+    scData.students.forEach(s=>{
+      const key = "s_"+s.id;
+      const mine = myStud.has(s.id);
+      const may = curAdmin || mine;
+      t.push(`<div class="trow lvl1" data-t="${key}">${ic("user")} ${esc(s.name)}${mine?` <span class="tagpill">din</span>`:""} ${scCaret(key)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="student:${s.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+      if(scOpen[key]){
+        (s.rs_student_member||[]).forEach(m=> t.push(`<div class="tleaf lvl2">${ic("mail")} ${esc(m.email)}${may?`<span class="tbtns"><button class="x" data-scd="smail:${s.id}|${encodeURIComponent(m.email)}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+        if(!(s.rs_student_member||[]).length) t.push(`<div class="tleaf lvl2 tmuted">Ingen mejl kopplad än</div>`);
+        if(may) t.push(`<div class="addhorse lvl2"><input type="email" id="scin_smail_${s.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-sca="smail:${s.id}">+ Mejl</button></div>`);
+        const gr = scData.gstud.filter(x=> x.student_id === s.id).map(x=> (scData.groups.find(g=> g.id === x.group_id)||{}).name).filter(Boolean);
+        t.push(`<div class="tleaf lvl2 tmuted">Grupper: ${gr.length? gr.map(esc).join(", ") : "inga än"}</div>`);
+      }
+    });
+    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_student" placeholder="Elevens namn"><button class="btn sm" data-sca="student">+ Elev</button></div>`);
+  }
+  host.innerHTML = t.join("");
+  host.querySelectorAll("[data-t]").forEach(n=> n.onclick = ()=>{ const k=n.getAttribute("data-t"); scOpen[k]=!scOpen[k]; renderSchoolTree(); });
+  host.querySelectorAll("[data-sce]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen["edit_"+b.getAttribute("data-sce")] = true; renderSchoolTree(); });
+  host.querySelectorAll("[data-scc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); delete scOpen["edit_"+b.getAttribute("data-scc")]; renderSchoolTree(); });
+  host.querySelectorAll("[data-scs]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scSave(b.getAttribute("data-scs")); });
+  host.querySelectorAll("[data-sca]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scAdd(b.getAttribute("data-sca")); });
+  host.querySelectorAll("[data-scd]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scDelete(b.getAttribute("data-scd")); });
+  host.querySelectorAll(".addhorse, .editrow").forEach(n=> n.onclick=(e)=> e.stopPropagation());
+}
+
+async function scSave(spec){
+  const [kind, id] = spec.split(":");
+  if(kind !== "group") return;
+  const upd = {
+    name: (el("scg_name_"+id).value||"").trim() || "Grupp",
+    category_id: el("scg_cat_"+id).value || null,
+    weekday: parseInt(el("scg_wd_"+id).value, 10),
+    start_time: el("scg_time_"+id).value,
+    duration_min: parseInt(el("scg_dur_"+id).value, 10),
+    capacity: parseInt(el("scg_cap_"+id).value, 10),
+    horse_rotation: parseInt(el("scg_rot_"+id).value, 10)
+  };
+  const r = await db.from("rs_group").update(upd).eq("id", id);
+  if(r.error){ alert("Kunde inte spara: " + r.error.message); return; }
+  delete scOpen["edit_"+id];
+  await reloadSchool();
+}
+
+async function scAdd(spec){
+  const parts = spec.split(":"); const kind = parts[0], a = parts[1];
+  let r = null;
+  if(kind==="group"){ const name=(el("scin_group").value||"").trim(); if(!name) return;
+    r = await db.from("rs_group").insert({ stable_id: scStableId, name, sort_order: scData.groups.length }); }
+  if(kind==="cat"){ const name=(el("scin_cat").value||"").trim(); if(!name) return;
+    r = await db.from("category").insert({ stable_id: scStableId, name, sort_order: scData.cats.length }); }
+  if(kind==="horse"){ const name=(el("scin_horse").value||"").trim(); if(!name) return;
+    r = await db.from("rs_horse").insert({ stable_id: scStableId, name }); }
+  if(kind==="student"){ const name=(el("scin_student").value||"").trim(); if(!name) return;
+    r = await db.from("rs_student").insert({ stable_id: scStableId, name }); }
+  if(kind==="leader"){ const name=(el("scin_leader_"+a).value||"").trim(); if(!name) return;
+    r = await db.from("rs_leader").insert({ group_id: a, name }); }
+  if(kind==="gstud"){ const sid = el("scin_gstud_"+a).value; if(!sid) return;
+    const g = scData.groups.find(x=> x.id === a);
+    const n = scData.gstud.filter(x=> x.group_id === a).length;
+    if(g && n >= g.capacity){ await infoDialog(`Gruppen är full (${g.capacity} platser). Höj antalet platser eller ta bort någon först.`, "Fullt"); return; }
+    r = await db.from("rs_group_student").insert({ group_id: a, student_id: sid }); }
+  if(kind==="smail"){ const email = normEmail(el("scin_smail_"+a).value);
+    if(!email.includes("@")){ await infoDialog("Skriv en giltig mejladress.", "Mejl saknas"); return; }
+    r = await db.from("rs_student_member").insert({ student_id: a, email }); }
+  if(!r) return;
+  if(r.error){ alert("Kunde inte lägga till: " + r.error.message); return; }
+  await reloadSchool();
+}
+
+async function scDelete(spec){
+  const i = spec.indexOf(":"); const kind = spec.slice(0,i); const id = spec.slice(i+1);
+  let q = null, text = "";
+  if(kind==="group"){ const g=scData.groups.find(x=>x.id===id); text=`Du håller på att ta bort gruppen "${g?g.name:""}" med dess lektioner och tilldelningar.`; q=()=>db.from("rs_group").delete().eq("id",id); }
+  if(kind==="cat"){ const c=scData.cats.find(x=>x.id===id); text=`Ta bort kategorin "${c?c.name:""}"?`; q=()=>db.from("category").delete().eq("id",id); }
+  if(kind==="horse"){ const h=scData.horses.find(x=>x.id===id); text=`Ta bort hästen "${h?h.name:""}"?`; q=()=>db.from("rs_horse").delete().eq("id",id); }
+  if(kind==="student"){ const s=scData.students.find(x=>x.id===id); text=`Du håller på att ta bort eleven "${s?s.name:""}" ur ridskolan.`; q=()=>db.from("rs_student").delete().eq("id",id); }
+  if(kind==="leader"){ const ld=scData.leaders.find(x=>x.id===id); text=`Ta bort ledaren "${ld?ld.name:""}"?`; q=()=>db.from("rs_leader").delete().eq("id",id); }
+  if(kind==="gstud"){ const j=id.indexOf("|"); const gid=id.slice(0,j), sid=id.slice(j+1);
+    const s=scData.students.find(x=>x.id===sid); text=`Ta bort ${s?s.name:"eleven"} ur gruppen?`;
+    q=()=>db.from("rs_group_student").delete().eq("group_id",gid).eq("student_id",sid); }
+  if(kind==="smail"){ const j=id.indexOf("|"); const sid=id.slice(0,j), em=decodeURIComponent(id.slice(j+1));
+    text=`Ta bort mejladressen ${em}?`;
+    q=()=>db.from("rs_student_member").delete().eq("student_id",sid).eq("email",em); }
+  if(!q) return;
+  if(!(await confirmDialog(text))) return;
+  const r = await q();
+  if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
+  await reloadSchool();
+}
+
+/* ---- Ridskolans schema: lektioner per vecka med hästtilldelning ---- */
+async function renderSchoolSchedule(stableId){
+  scStableId = stableId;
+  appEl.innerHTML = `<div id="scsShell"><div class="card"><div class="empty">Laddar schema…</div></div></div>`;
+  try{
+    const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    curAdmin = await amIAdmin(stableId);
+    const [g,s,h,l,gs] = await Promise.all([
+      db.from("rs_group").select("*, category(name)").eq("stable_id", stableId).order("weekday").order("start_time"),
+      db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", stableId).order("name"),
+      db.from("rs_horse").select("*").eq("stable_id", stableId).order("name"),
+      db.from("rs_leader").select("*"),
+      db.from("rs_group_student").select("*")
+    ]);
+    if(g.error) throw g.error;
+    scData = { stable: st.data, groups: g.data, cats: [], students: s.error?[]:s.data, horses: h.error?[]:h.data,
+               leaders: l.error?[]:l.data, gstud: gs.error?[]:gs.data };
+    if(!weekStart2) weekStart2 = startOfWeek(new Date());
+    el("scsShell").innerHTML = `
+      <div class="card schedtop">
+        <div class="schedeyebrow">Schema · Ridskola</div>
+        <h1 class="schedname">${esc(st.data.name)}</h1>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+          <button class="btn sm" id="scwPrev">‹ Förra</button>
+          <button class="btn sm" id="scwWeek">Vecka ${isoWeekNumber(weekStart2)}</button>
+          <button class="btn sm" id="scwNext">Nästa ›</button>
+        </div>
+      </div>
+      <div id="scsWeek"></div>`;
+    el("scwPrev").onclick = ()=>{ weekStart2=new Date(weekStart2); weekStart2.setDate(weekStart2.getDate()-7); renderSchoolSchedule(stableId); };
+    el("scwNext").onclick = ()=>{ weekStart2=new Date(weekStart2); weekStart2.setDate(weekStart2.getDate()+7); renderSchoolSchedule(stableId); };
+    el("scwWeek").onclick = ()=>{ weekStart2=startOfWeek(new Date()); renderSchoolSchedule(stableId); };
+    await drawSchoolWeek();
+  }catch(e){ el("scsShell").innerHTML = msg("Kunde inte öppna schemat: " + (e.message||e) + " (har du kört db/ridskola.sql?)", "err"); }
+}
+
+async function drawSchoolWeek(){
+  const host = el("scsWeek"); if(!host) return;
+  const gids = scData.groups.map(g=> g.id);
+  const startISO = isoDate(weekStart2);
+  const endD = new Date(weekStart2); endD.setDate(endD.getDate()+6);
+  const endISO = isoDate(endD);
+  let asg = [], abs = [];
+  if(gids.length){
+    const [aq, bq] = await Promise.all([
+      db.from("rs_assignment").select("*").in("group_id", gids).gte("lesson_date", startISO).lte("lesson_date", endISO),
+      db.from("rs_absence").select("*").in("group_id", gids).gte("lesson_date", startISO).lte("lesson_date", endISO)
+    ]);
+    asg = aq.error?[]:aq.data; abs = bq.error?[]:bq.data;
+  }
+  const myStud = rsMyStudentIds();
+  const tISO = isoDate(new Date());
+  const catTint = {}; let ci = 0;
+  scData.groups.forEach(g=>{ const k=g.category_id||"none"; if(k!=="none" && !(k in catTint)){ catTint[k]=CAT_HUES[ci%CAT_HUES.length]; ci++; } });
+  let html = "";
+  for(let wd=1; wd<=7; wd++){
+    const dayGroups = scData.groups.filter(g=> g.weekday === wd);
+    if(!dayGroups.length) continue;
+    const d = new Date(weekStart2); d.setDate(d.getDate()+wd-1);
+    const dISO = isoDate(d);
+    html += `<div class="sublabel" style="margin-top:16px">${RS_WD[wd]} ${d.getDate()}/${d.getMonth()+1}${dISO===tISO?' · <span style="color:var(--accent)">idag</span>':""}</div>`;
+    dayGroups.forEach(g=>{
+      const hu = catTint[g.category_id];
+      const tint = hu!=null ? ` style="background:hsla(${hu},45%,45%,.07);border-color:hsla(${hu},35%,42%,.4)"` : "";
+      const leaders = scData.leaders.filter(x=> x.group_id===g.id).map(x=> x.name);
+      const studs = scData.gstud.filter(x=> x.group_id===g.id).map(x=> scData.students.find(s=> s.id===x.student_id)).filter(Boolean);
+      const rows = studs.map(s=>{
+        const a = asg.find(x=> x.group_id===g.id && x.lesson_date===dISO && x.student_id===s.id);
+        const sick = abs.some(x=> x.group_id===g.id && x.lesson_date===dISO && x.student_id===s.id);
+        const mine = myStud.has(s.id);
+        let horseCell;
+        if(curAdmin){
+          const hO = `<option value="">– välj häst –</option>` + scData.horses.map(h=>`<option value="${h.id}"${a&&a.horse_id===h.id?" selected":""}>${esc(h.name)}</option>`).join("");
+          horseCell = `<select class="schorse" data-asg="${g.id}|${dISO}|${s.id}">${hO}</select>`;
+        } else {
+          const hn = a && a.horse_id ? ((scData.horses.find(h=> h.id===a.horse_id)||{}).name || "?") : "–";
+          horseCell = `<span class="meta2">${esc(hn)}</span>`;
+        }
+        const sickBit = sick ? `<span class="tagpill st-no" ${mine||curAdmin?`data-unsick="${g.id}|${dISO}|${s.id}" style="cursor:pointer" title="Ta bort sjukanmälan"`:""}>sjuk</span>`
+          : ((mine && dISO >= tISO) ? `<button class="btn sm" data-sick="${g.id}|${dISO}|${s.id}">Sjukanmäl</button>` : "");
+        return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(s.name)}${mine?` <span class="tagpill">din</span>`:""}</span>${horseCell}${sickBit}</div>`;
+      }).join("");
+      const adminBtns = curAdmin ? `<div class="notifbtns" style="margin-top:10px">
+          <button class="btn sm" data-copyw="${g.id}|${dISO}">Kopiera förra veckan</button>
+          <button class="btn sm" data-rot="${g.id}|${dISO}">Rotera hästar</button>
+        </div>` : "";
+      html += `<div class="card"${tint}>
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <b>${esc(g.name)}</b>
+          <span class="meta2">${g.start_time}–${rsEndTime(g.start_time,g.duration_min)}</span>
+          ${g.category&&g.category.name?`<span class="tagpill">${esc(g.category.name)}</span>`:""}
+          <span class="meta2" style="margin-left:auto">byte efter ${g.horse_rotation} ggr</span>
+        </div>
+        ${leaders.length?`<div class="meta2" style="margin-top:2px">Ledare: ${leaders.map(esc).join(", ")}</div>`:""}
+        <div style="margin-top:10px">${rows || `<div class="empty">Inga elever i gruppen än — lägg till i Inställningar.</div>`}</div>
+        ${adminBtns}
+      </div>`;
+    });
+  }
+  host.innerHTML = html || `<div class="card"><div class="empty">Inga grupper än — skapa grupper under Inställningar.</div></div>`;
+  host.querySelectorAll("[data-asg]").forEach(sel=> sel.onchange = async ()=>{
+    const [gid, dISO, sid] = sel.getAttribute("data-asg").split("|");
+    const r = await db.from("rs_assignment").upsert({ group_id: gid, lesson_date: dISO, student_id: sid, horse_id: sel.value || null });
+    if(r.error) alert("Kunde inte spara: " + r.error.message);
+  });
+  host.querySelectorAll("[data-sick]").forEach(b=> b.onclick = async ()=>{
+    const [gid, dISO, sid] = b.getAttribute("data-sick").split("|");
+    const s = scData.students.find(x=> x.id === sid);
+    const d = new Date(dISO+"T00:00:00");
+    if(!(await confirmDialog(`Sjukanmäla ${s?s.name:"eleven"} till lektionen ${RS_WD[((d.getDay()+6)%7)+1].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}?`, { title:"Sjukanmälan", okText:"Ja, sjukanmäl", primary:true }))) return;
+    const r = await db.from("rs_absence").insert({ group_id: gid, lesson_date: dISO, student_id: sid });
+    if(r.error){ alert("Kunde inte sjukanmäla: " + r.error.message); return; }
+    drawSchoolWeek();
+  });
+  host.querySelectorAll("[data-unsick]").forEach(b=> b.onclick = async ()=>{
+    const [gid, dISO, sid] = b.getAttribute("data-unsick").split("|");
+    if(!(await confirmDialog("Ta bort sjukanmälan?", { okText:"Ja, ta bort" }))) return;
+    await db.from("rs_absence").delete().eq("group_id",gid).eq("lesson_date",dISO).eq("student_id",sid);
+    drawSchoolWeek();
+  });
+  host.querySelectorAll("[data-copyw]").forEach(b=> b.onclick = async ()=>{
+    const [gid, dISO] = b.getAttribute("data-copyw").split("|");
+    const prev = new Date(dISO+"T00:00:00"); prev.setDate(prev.getDate()-7);
+    const pq = await db.from("rs_assignment").select("*").eq("group_id", gid).eq("lesson_date", isoDate(prev));
+    if(pq.error || !(pq.data||[]).length){ infoDialog("Hittade ingen tilldelning förra veckan att kopiera.", "Inget att kopiera"); return; }
+    const rows = pq.data.map(x=> ({ group_id: gid, lesson_date: dISO, student_id: x.student_id, horse_id: x.horse_id }));
+    const r = await db.from("rs_assignment").upsert(rows);
+    if(r.error){ alert("Kunde inte kopiera: " + r.error.message); return; }
+    drawSchoolWeek();
+  });
+  host.querySelectorAll("[data-rot]").forEach(b=> b.onclick = async ()=>{
+    const [gid, dISO] = b.getAttribute("data-rot").split("|");
+    const studs = scData.gstud.filter(x=> x.group_id===gid).map(x=> x.student_id);
+    const aq = await db.from("rs_assignment").select("*").eq("group_id", gid).eq("lesson_date", dISO);
+    const cur = aq.error?[]:aq.data;
+    const horses = studs.map(sid=>{ const a=cur.find(x=> x.student_id===sid); return a? a.horse_id : null; });
+    if(!horses.some(Boolean)){ infoDialog("Tilldela hästar först — sedan kan du rotera dem.", "Inget att rotera"); return; }
+    const rotated = studs.map((sid,i)=> ({ group_id: gid, lesson_date: dISO, student_id: sid, horse_id: horses[(i-1+horses.length)%horses.length] }));
+    const r = await db.from("rs_assignment").upsert(rotated);
+    if(r.error){ alert("Kunde inte rotera: " + r.error.message); return; }
+    drawSchoolWeek();
+  });
 }
 
 /* ============ Start ============ */
