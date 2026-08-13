@@ -229,4 +229,10 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
   .mobonly{display:block}
   #btnSchedule,#btnSettings,#btnProfile,#btnChat,#btnTheme{display:none !important}
   .menu{min-width:240px;max-width:calc(100vw - 24px)}
+  .addhorse{flex-direction:column;align-items:stretch}
+  .addhorse input,.addhorse select{min-width:0;width:100%;flex:none}
+  .addhorse .btn{width:100%;padding:11px;text-align:center}
+  .lvl3{margin-left:24px}
+  .lvl2{margin-left:16px}
+  .lvl1{margin-left:8px}
 }

@@ -277,11 +277,11 @@ function profileNode(p, groupId, keyPrefix){
     const mails = (p.profile_member||[]).map(m=>m.email).filter(Boolean);
     mails.forEach(em=> out.push(`<div class="tleaf lvl3">${ic("mail")} ${esc(em)}${may?`<span class="tbtns"><button class="x" data-d="mail:${p.id}|${encodeURIComponent(em)}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
     if(!mails.length) out.push(`<div class="tleaf lvl3 tmuted">Ingen mejl kopplad än</div>`);
-    if(may) out.push(`<div class="addhorse lvl3"><input type="email" id="in_mail_${p.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-add="mail:${p.id}">+ Mejl</button></div>`);
+    if(may) out.push(`<div class="addhorse lvl3"><input type="email" id="in_mail_${keyPrefix}_${p.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-add="mail:${keyPrefix}:${p.id}">+ Mejl</button></div>`);
     horses.forEach(h=> out.push(horseRow(h, mine)));
     if(may){
       const gsel = `<option value="">Ingen grupp</option>` + stData.groups.map(g=>`<option value="${g.id}"${g.id===groupId?" selected":""}>${esc(g.name)}</option>`).join("");
-      out.push(`<div class="addhorse lvl3"><input type="text" id="in_horse_${keyPrefix}_${p.id}" placeholder="Hästens namn"><select id="in_horsegrp_${keyPrefix}_${p.id}">${gsel}</select><button class="btn sm" data-add="horse:${keyPrefix}:${p.id}">+ Häst</button></div>`);
+      out.push(`<div class="addhorse lvl3"><input type="text" id="in_horse_${keyPrefix}_${p.id}" placeholder="Hästens namn"><select id="in_horsegrp_${keyPrefix}_${p.id}">${gsel}</select><button class="btn sm" data-add="horse:${keyPrefix}:${p.id}">+ Lägg till häst</button></div>`);
     }
   }
   return out.join("");
@@ -455,10 +455,11 @@ async function doAdd(spec){
     r = await db.from("profile").insert({ stable_id:stStableId, name }); }
   if(kind==="cat"){ const name=(el("in_cat").value||"").trim(); if(!name) return;
     r = await db.from("category").insert({ stable_id:stStableId, name, sort_order:stData.cats.length }); }
-  if(kind==="mail"){ const email=normEmail(el("in_mail_"+a).value); if(!email.includes("@")){ alert("Skriv en giltig mejladress."); return; }
-    r = await db.from("profile_member").insert({ profile_id:a, email }); }
+  if(kind==="mail"){ const email=normEmail(el("in_mail_"+a+"_"+b).value); if(!email.includes("@")){ await infoDialog("Skriv en giltig mejladress i fältet först.", "Mejl saknas"); return; }
+    r = await db.from("profile_member").insert({ profile_id:b, email }); }
   if(kind==="horse"){ const name=(el("in_horse_"+a+"_"+b).value||"").trim(); const gid=el("in_horsegrp_"+a+"_"+b).value||null;
-    r = await db.from("horse").insert({ profile_id:b, name:name||null, group_id:gid }); }
+    if(!name){ await infoDialog("Skriv hästens namn i fältet först, välj grupp och tryck sedan på + Lägg till häst.", "Namn saknas"); return; }
+    r = await db.from("horse").insert({ profile_id:b, name, group_id:gid }); }
   if(kind==="pass"){ const name=(el("in_pass_name").value||"").trim(); if(!name) return;
     let cap=parseInt(el("in_pass_cap").value,10); if(isNaN(cap)||cap<1) cap=1;
     r = await db.from("pass_def").insert({ stable_id:stStableId, name, start_time:el("in_pass_time").value, category_id:el("in_pass_cat").value||null, day_rule:el("in_pass_days").value, capacity:cap, sort_order:stData.passes.length }); }
