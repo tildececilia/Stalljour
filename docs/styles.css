@@ -209,11 +209,24 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 .schip.clickable:hover{filter:brightness(.95)}
 .btn.block{display:block;width:100%;text-align:left}
 
-/* Mobil: ikon-knappar i headern så allt får plats */
+/* Chatt */
+.chatmsgs{display:flex;flex-direction:column;gap:6px;max-height:55vh;min-height:200px;overflow-y:auto;padding:2px}
+.cmsg{max-width:82%;padding:8px 12px;border-radius:14px;background:var(--card-2);align-self:flex-start;font-size:.93rem;line-height:1.35}
+.cmsg.me{align-self:flex-end;background:var(--accent);color:var(--accent-ink)}
+.cmsg .who{font-size:.7rem;font-weight:700;color:var(--accent);margin-bottom:1px}
+.cmsg .when{font-size:.64rem;opacity:.6;margin-top:2px;text-align:right}
+.chatinput{display:flex;gap:8px;margin-top:12px}
+.chatinput input{flex:1}
+.mobonly{display:none}
+
+/* Mobil: hamburgermeny — bara logga, klocka och ☰ i headern */
 @media (max-width:640px){
   header.app{gap:6px;padding:10px 12px}
   header.app .logo{font-size:1.55rem}
   header.app .btn{padding:8px 10px}
   header.app .btn .lbl{display:none}
   header.app .btn .icn{width:19px;height:19px}
+  .mobonly{display:block}
+  #btnSchedule,#btnSettings,#btnProfile,#btnChat,#btnTheme{display:none !important}
+  .menu{min-width:240px;max-width:calc(100vw - 24px)}
 }

@@ -65,6 +65,8 @@ const ICONS = {
   tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1"/>',
   mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  menu: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
   pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 };
@@ -74,9 +76,11 @@ function ic(name){
 
 /* ============ Router ============ */
 function render(){
+  if(chatPollTimer){ clearInterval(chatPollTimer); chatPollTimer = null; }
   updateHeader();
   if(!session){ didAutoRoute = false; renderLogin(); return; }
   if(view.name === "schedule" && view.stableId){ renderSchedule(view.stableId); return; }
+  if(view.name === "chat" && view.stableId){ renderChat(view.stableId); return; }
   if(view.name === "stable" && view.stableId){ renderStable(view.stableId); return; }
   renderHome();
 }
@@ -718,20 +722,21 @@ applyTheme(theme);
 el("btnTheme").onclick = ()=>{ theme = theme==="dark"?"light":"dark"; try{ localStorage.setItem("stalljour.theme", theme); }catch(e){} applyTheme(theme); };
 
 function updateHeader(){
-  el("btnProfile").style.display  = session ? "" : "none";
-  el("btnSchedule").style.display = session ? "" : "none";
-  el("btnSettings").style.display = session ? "" : "none";
-  el("btnBell").style.display     = session ? "" : "none";
+  ["btnProfile","btnSchedule","btnSettings","btnBell","btnChat","btnBurger"].forEach(id=>{
+    const b = el(id); if(b) b.style.display = session ? "" : "none";
+  });
 }
 
-function closeMenus(){ el("profileMenu").classList.remove("open"); el("scheduleMenu").classList.remove("open"); el("bellMenu").classList.remove("open"); }
+function closeMenus(){ ["profileMenu","scheduleMenu","bellMenu","burgerMenu"].forEach(id=>{ const m=el(id); if(m) m.classList.remove("open"); }); }
 function closeProfileMenu(){ closeMenus(); }
 
 let pmState = null;   // utfällnings-läge för profil-menyn
 function resetPmState(){ pmState = { stablesOpen:false, stables:null, openStableId:null, profilesOpen:false, myProfiles:null }; }
 
+let pmTargetId = "profileMenu";   // var profil-menyn ritas (egen dropdown eller inuti hamburgaren)
 function buildProfileMenu(){
-  const m = el("profileMenu");
+  const m = el(pmTargetId);
+  if(!m) return;
   let bookAs = "";
   if(view.name === "schedule" && schedCtx && schedCtx.myProfiles.length){
     bookAs = `<div class="menuhead sub">Bokar som</div>` + schedCtx.myProfiles.map(p=>
@@ -805,8 +810,35 @@ el("btnProfile").onclick = (e)=>{
   const m = el("profileMenu");
   const wasOpen = m.classList.contains("open");
   closeMenus();
-  if(!wasOpen){ resetPmState(); buildProfileMenu(); m.classList.add("open"); }
+  if(!wasOpen){ resetPmState(); pmTargetId = "profileMenu"; buildProfileMenu(); m.classList.add("open"); }
 };
+
+/* ---- Hamburgermeny (mobil): nav + profil i ett ---- */
+function openBurgerMenu(){
+  const m = el("burgerMenu");
+  m.innerHTML = `
+    <button class="menuitem" data-bg="schedule">${ic("calendar")} Schema</button>
+    <button class="menuitem" data-bg="chat">${ic("message")} Chatt</button>
+    <button class="menuitem" data-bg="stable">${ic("settings")} Inställningar</button>
+    <button class="menuitem" data-bg="theme">${ic(theme==="dark"?"sun":"moon")} ${theme==="dark"?"Ljust läge":"Mörkt läge"}</button>
+    <div id="burgerProfile" style="border-top:1px solid var(--line);margin-top:4px;padding-top:2px"></div>`;
+  m.querySelectorAll("[data-bg]").forEach(b=> b.onclick = (e)=>{
+    e.stopPropagation();
+    const k = b.getAttribute("data-bg");
+    if(k === "theme"){ theme = theme==="dark"?"light":"dark"; try{ localStorage.setItem("stalljour.theme", theme); }catch(err){} applyTheme(theme); openBurgerMenu(); return; }
+    closeMenus(); gotoView(k);
+  });
+  resetPmState(); pmTargetId = "burgerProfile"; buildProfileMenu();
+  m.classList.add("open");
+}
+el("btnBurger").onclick = (e)=>{
+  e.stopPropagation();
+  const m = el("burgerMenu");
+  const wasOpen = m.classList.contains("open");
+  closeMenus();
+  if(!wasOpen) openBurgerMenu();
+};
+el("btnChat").onclick = ()=> gotoView("chat");
 document.addEventListener("click", (e)=>{ if(!e.target.closest(".menuwrap")) closeMenus(); });
 
 async function gotoView(name){
@@ -1012,6 +1044,151 @@ async function sendPassRequest(type, bookingId, fromP, toP, label){
 
 /* ============ Ikoner i headern ============ */
 document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
+
+/* ============ Gruppchatt ============ */
+let chatPollTimer = null;
+let chatCtx = null;   // {stable, groups, profiles, myIds, memberRows}
+
+async function renderChat(stableId){
+  appEl.innerHTML = `<div id="chatShell"><div class="card"><div class="empty">Laddar chatt…</div></div></div>`;
+  try{
+    const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    const g  = await db.from("duty_group").select("*").eq("stable_id", stableId).order("sort_order"); if(g.error) throw g.error;
+    const pr = await db.from("profile").select("id,name,profile_member(email),horse(group_id)").eq("stable_id", stableId).order("created_at"); if(pr.error) throw pr.error;
+    const myIds = pr.data.filter(p=> (p.profile_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(p=> p.id);
+    const cm = await db.from("chat_member").select("group_id,profile_id");
+    chatCtx = { stable: st.data, groups: g.data, profiles: pr.data, myIds, memberRows: cm.error ? [] : (cm.data||[]) };
+    if(view.groupId) renderChatRoom(view.groupId);
+    else renderChatList();
+  }catch(e){
+    el("chatShell").innerHTML = msg("Kunde inte öppna chatten: " + (e.message||e), "err");
+  }
+}
+
+function amRegularIn(gid){
+  return chatCtx.profiles.some(p=> chatCtx.myIds.includes(p.id) && (p.horse||[]).some(h=> h.group_id === gid));
+}
+function amInvitedIn(gid){
+  return chatCtx.memberRows.some(r=> r.group_id === gid && chatCtx.myIds.includes(r.profile_id));
+}
+function mySenderProfile(gid){
+  const reg = chatCtx.profiles.find(p=> chatCtx.myIds.includes(p.id) && (p.horse||[]).some(h=> h.group_id === gid));
+  if(reg) return reg.id;
+  const inv = chatCtx.memberRows.find(r=> r.group_id === gid && chatCtx.myIds.includes(r.profile_id));
+  return inv ? inv.profile_id : null;
+}
+
+function renderChatList(){
+  const mine = chatCtx.groups.filter(g=> amRegularIn(g.id) || amInvitedIn(g.id));
+  const rows = mine.length ? mine.map(g=>`
+    <button class="row" data-chat="${g.id}">
+      <span class="cdot" style="background:${g.color||'#4e9e6e'}"></span>
+      <div class="grow"><div class="nm">${esc(g.name)}</div></div>
+      <span class="tagpill">${amRegularIn(g.id) ? "din grupp" : "inbjuden"}</span>
+      <span class="chev">›</span>
+    </button>`).join("")
+    : `<div class="empty">Du är inte med i någon chatt än. Chatten följer din grupp — be admin koppla din profil till en grupp via en häst, eller bli inbjuden.</div>`;
+  el("chatShell").innerHTML = `
+    <div class="card schedtop">
+      <div class="schedeyebrow">Chatt</div>
+      <h1 class="schedname">${esc(chatCtx.stable.name)}</h1>
+    </div>
+    <div class="card"><div class="list">${rows}</div></div>`;
+  document.querySelectorAll("[data-chat]").forEach(b=> b.onclick = ()=>{ view = { name:"chat", stableId: chatCtx.stable.id, groupId: b.getAttribute("data-chat") }; renderChatRoom(view.groupId); });
+}
+
+function renderChatRoom(gid){
+  const g = chatCtx.groups.find(x=> x.id === gid);
+  if(!g){ renderChatList(); return; }
+  const canManage = amRegularIn(gid);
+  el("chatShell").innerHTML = `
+    <button class="backlink" id="chatBack">‹ Alla chattar</button>
+    <div class="card" style="display:flex;align-items:center;gap:10px">
+      <span class="cdot" style="background:${g.color||'#4e9e6e'}"></span>
+      <div class="grow"><b>${esc(g.name)}</b></div>
+      <button class="btn sm" id="chatMembersBtn">${ic("users")} Medlemmar</button>
+    </div>
+    <div class="card" id="chatMembersCard" style="display:none"></div>
+    <div class="card">
+      <div class="chatmsgs" id="msgList"><div class="empty">Laddar…</div></div>
+      <div class="chatinput">
+        <input type="text" id="msgInput" placeholder="Skriv ett meddelande…" maxlength="500">
+        <button class="btn primary" id="msgSend">Skicka</button>
+      </div>
+    </div>`;
+  el("chatBack").onclick = ()=>{ view = { name:"chat", stableId: chatCtx.stable.id }; render(); };
+  el("chatMembersBtn").onclick = ()=>{ const c = el("chatMembersCard"); const show = c.style.display === "none"; c.style.display = show ? "" : "none"; if(show) renderChatMembers(gid); };
+  el("msgSend").onclick = ()=> sendChatMsg(gid);
+  el("msgInput").addEventListener("keydown", e=>{ if(e.key === "Enter") sendChatMsg(gid); });
+  loadChatMsgs(gid, true);
+  chatPollTimer = setInterval(()=> loadChatMsgs(gid, false), 5000);
+}
+
+async function loadChatMsgs(gid, first){
+  const listEl = el("msgList"); if(!listEl) return;
+  const r = await db.from("chat_message").select("id,body,created_at,profile_id,profile(name)")
+    .eq("group_id", gid).order("created_at",{ascending:true}).limit(300);
+  if(r.error){ if(first) listEl.innerHTML = msg("Kunde inte hämta meddelanden: " + r.error.message, "err"); return; }
+  const nearBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80;
+  if(!r.data.length){ listEl.innerHTML = `<div class="empty">Inga meddelanden än — säg hej! 👋</div>`; return; }
+  listEl.innerHTML = r.data.map(mrow=>{
+    const mine = chatCtx.myIds.includes(mrow.profile_id);
+    const d = new Date(mrow.created_at);
+    const time = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")} ${d.getDate()}/${d.getMonth()+1}`;
+    return `<div class="cmsg${mine?" me":""}">
+      ${mine ? "" : `<div class="who">${esc((mrow.profile&&mrow.profile.name)||"?")}</div>`}
+      <div>${esc(mrow.body)}</div>
+      <div class="when">${time}</div>
+    </div>`;
+  }).join("");
+  if(first || nearBottom) listEl.scrollTop = listEl.scrollHeight;
+}
+
+async function sendChatMsg(gid){
+  const inp = el("msgInput"); const body = (inp.value||"").trim();
+  if(!body) return;
+  const sender = mySenderProfile(gid);
+  if(!sender){ alert("Du är inte medlem i den här chatten."); return; }
+  inp.value = "";
+  const r = await db.from("chat_message").insert({ stable_id: chatCtx.stable.id, group_id: gid, profile_id: sender, body });
+  if(r.error){ alert("Kunde inte skicka: " + r.error.message); inp.value = body; return; }
+  await loadChatMsgs(gid, true);
+}
+
+async function renderChatMembers(gid){
+  const card = el("chatMembersCard"); if(!card) return;
+  const cm = await db.from("chat_member").select("group_id,profile_id");
+  chatCtx.memberRows = cm.error ? chatCtx.memberRows : (cm.data||[]);
+  const canManage = amRegularIn(gid);
+  const regulars = chatCtx.profiles.filter(p=> (p.horse||[]).some(h=> h.group_id === gid));
+  const invitedIds = chatCtx.memberRows.filter(r=> r.group_id === gid).map(r=> r.profile_id);
+  const invited = chatCtx.profiles.filter(p=> invitedIds.includes(p.id));
+  const inChat = new Set([...regulars.map(p=>p.id), ...invited.map(p=>p.id)]);
+  const invitable = chatCtx.profiles.filter(p=> !inChat.has(p.id));
+  card.innerHTML = `
+    <div class="sublabel" style="margin-top:0">Ordinarie (${esc((chatCtx.groups.find(x=>x.id===gid)||{}).name||"")})</div>
+    ${regulars.map(p=>`<div class="tleaf">${ic("user")} ${esc(p.name)}</div>`).join("") || `<div class="tleaf tmuted">Inga än</div>`}
+    <div class="sublabel">Inbjudna</div>
+    ${invited.map(p=>`<div class="tleaf">${ic("user")} ${esc(p.name)}${(canManage || chatCtx.myIds.includes(p.id))?`<span class="tbtns"><button class="x" data-kick="${p.id}" title="Ta bort ur chatten">${ic("x")}</button></span>`:""}</div>`).join("") || `<div class="tleaf tmuted">Inga inbjudna</div>`}
+    ${canManage && invitable.length ? `
+      <div class="sublabel">Bjud in</div>
+      <div class="addhorse"><select id="invSel">${invitable.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+      <button class="btn sm" id="invBtn">+ Bjud in</button></div>` : ""}`;
+  card.querySelectorAll("[data-kick]").forEach(b=> b.onclick = async ()=>{
+    const pid = b.getAttribute("data-kick");
+    const p = chatCtx.profiles.find(x=> x.id === pid);
+    if(!(await confirmDialog(`Ta bort ${p ? p.name : "profilen"} ur chatten?`))) return;
+    await db.from("chat_member").delete().eq("group_id", gid).eq("profile_id", pid);
+    renderChatMembers(gid);
+  });
+  const invBtn = el("invBtn");
+  if(invBtn) invBtn.onclick = async ()=>{
+    const pid = el("invSel").value;
+    const r = await db.from("chat_member").insert({ group_id: gid, profile_id: pid, added_by: mySenderProfile(gid) });
+    if(r.error){ alert("Kunde inte bjuda in: " + r.error.message); return; }
+    renderChatMembers(gid);
+  };
+}
 
 /* ============ Start ============ */
 function setSessionFrom(s){ session = s ? { id: s.user.id, email: normEmail(s.user.email) } : null; }
