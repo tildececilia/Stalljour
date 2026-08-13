@@ -42,6 +42,7 @@ const TIME_OPTIONS = (()=>{ const a=[]; for(let h=0;h<24;h++) for(const m of [0,
 function capOpts(sel){ let o=""; for(let i=1;i<=10;i++) o += `<option value="${i}"${i===sel?" selected":""}>${i}</option>`; return o; }
 let weekStart2 = null;   // schemats vecka (måndag)
 let schedCtx = null;     // {stable, groups, passes, myProfiles, actingProfileId}
+let schedLogOpen = false; // händelseloggen utfälld?
 
 /* ---- Färgkodning: personfärg på namn + kategorinyans på rutor ---- */
 function hashHue(s){
@@ -666,6 +667,7 @@ async function renderSchedule(stableId){
     const mp = await db.from("profile_member").select("profile(id,name,stable_id)").eq("email", session.email); if(mp.error) throw mp.error;
     const myProfiles = (mp.data||[]).map(r=>r.profile).filter(x=> x && x.stable_id===stableId);
     schedCtx = { stable: st.data, groups: g.data, passes: sortPassesByTime(p.data), profiles: pr.data, myProfiles, actingProfileId: myProfiles[0] ? myProfiles[0].id : null };
+    schedLogOpen = false;
     if(!weekStart2) weekStart2 = startOfWeek(new Date());
     drawScheduleShell();
     await drawGrid();
@@ -753,12 +755,65 @@ async function drawGrid(keepScroll){
   });
   html += `</div></div>`;
   html += renderStats(tgt, myIds);   // statistiken under schemat
+  html += `<div class="card">
+    <div class="trow" data-logtoggle style="padding:6px 4px">${ic("list")} Händelselogg <span class="meta2">vecka ${isoWeekNumber(weekStart2)}</span> <span class="caret" style="margin-left:auto">${schedLogOpen?"▾":"▸"}</span></div>
+    <div id="logBody" style="display:${schedLogOpen?"":"none"};margin-top:6px"></div>
+  </div>`;
   host.innerHTML = html;
   if(keepScroll) window.scrollTo(0, scrollY);
 
   host.querySelectorAll("[data-book]").forEach(btn=> btn.onclick = ()=> bookCell(btn.getAttribute("data-book"), btn.getAttribute("data-date")));
   host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = (e)=>{ e.stopPropagation(); cancelBooking(btn.getAttribute("data-cancel"), btn.getAttribute("data-cinfo")); });
   host.querySelectorAll("[data-req]").forEach(chip=> chip.onclick = ()=> onChipClick(chip.getAttribute("data-req"), chip.getAttribute("data-pinfo")));
+  const lt = host.querySelector("[data-logtoggle]");
+  if(lt) lt.onclick = ()=>{
+    schedLogOpen = !schedLogOpen;
+    const lb = el("logBody");
+    lb.style.display = schedLogOpen ? "" : "none";
+    lt.querySelector(".caret").textContent = schedLogOpen ? "▾" : "▸";
+    if(schedLogOpen) loadWeekLog();
+  };
+  if(schedLogOpen) loadWeekLog();
+}
+
+async function loadWeekLog(){
+  const lb = el("logBody"); if(!lb) return;
+  lb.innerHTML = `<div class="empty">Laddar…</div>`;
+  const startISO = isoDate(weekStart2);
+  const endD = new Date(weekStart2); endD.setDate(endD.getDate()+6);
+  const endISO = isoDate(endD);
+  const fmt = t=>{ const d = new Date(t); return `${d.getDate()}/${d.getMonth()+1} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
+  const passDay = pd=>{ const d = new Date(pd + "T00:00:00"); return `${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}`; };
+  const [bq, rq] = await Promise.all([
+    db.from("booking").select("created_at,pass_date,profile(name),pass_def(name)").eq("stable_id", schedCtx.stable.id).gte("pass_date", startISO).lte("pass_date", endISO),
+    db.from("pass_request").select("type,status,created_at,resolved_at,booking(pass_date,pass_def(name)),fromP:profile!pass_request_from_profile_fkey(name),toP:profile!pass_request_to_profile_fkey(name)").eq("stable_id", schedCtx.stable.id)
+  ]);
+  if(bq.error || rq.error){ lb.innerHTML = msg("Kunde inte hämta loggen.", "err"); return; }
+  const ev = [];
+  (bq.data||[]).forEach(b=>{
+    if(!b.created_at) return;
+    ev.push({ t: b.created_at, txt: `<b>${esc((b.profile&&b.profile.name)||"?")}</b> bokade ${esc((b.pass_def&&b.pass_def.name)||"pass")} ${passDay(b.pass_date)}` });
+  });
+  (rq.data||[]).forEach(q=>{
+    const bk = q.booking || {};
+    if(!bk.pass_date || bk.pass_date < startISO || bk.pass_date > endISO) return;
+    const pn = esc((bk.pass_def && bk.pass_def.name) || "pass");
+    const day = passDay(bk.pass_date);
+    const A = esc((q.fromP && q.fromP.name) || "?"), B = esc((q.toP && q.toP.name) || "?");
+    ev.push({ t: q.created_at, txt: q.type === "take"
+      ? `<b>${A}</b> frågade <b>${B}</b> om att ta över ${pn} ${day}`
+      : `<b>${A}</b> erbjöd <b>${B}</b> sitt pass ${pn} ${day}` });
+    if(q.status !== "pending" && q.resolved_at){
+      const okd = q.status === "accepted";
+      ev.push({ t: q.resolved_at, txt: q.type === "take"
+        ? (okd ? `<b>${B}</b> godkände — <b>${A}</b> tog över ${pn} ${day}` : `<b>${B}</b> avböjde förfrågan om ${pn} ${day}`)
+        : (okd ? `<b>${B}</b> tog emot ${pn} ${day} av <b>${A}</b>` : `<b>${B}</b> avböjde att ta ${pn} ${day}`) });
+    }
+  });
+  ev.sort((a,c)=> new Date(c.t) - new Date(a.t));
+  lb.innerHTML = ev.length
+    ? ev.map(e=> `<div class="logrow"><span class="logtime">${fmt(e.t)}</span><span>${e.txt}</span></div>`).join("")
+    : `<div class="empty">Inget har hänt kring den här veckans pass än.</div>`;
 }
 
 function scheduleCell(p, d, dISO, map, myIds, tISO){
