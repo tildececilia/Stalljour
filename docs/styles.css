@@ -137,7 +137,8 @@ input:focus,select:focus{border-color:var(--accent)}
 .scap.need{background:rgba(169,118,15,.18);color:#8a6209}
 :root[data-theme="dark"] .scap.need{color:#e6be63}
 .schips{display:flex;flex-wrap:wrap;gap:4px}
-.schip{display:inline-flex;align-items:center;gap:3px;font-size:.72rem;font-weight:600;background:var(--accent-soft);color:var(--ink);padding:2px 4px 2px 7px;border-radius:8px;line-height:1.2;word-break:break-word}
+.schip{display:inline-flex;align-items:center;gap:3px;font-size:.72rem;font-weight:600;background:var(--accent-soft);color:var(--ink);padding:2px 4px 2px 7px;border-radius:8px;line-height:1.2;max-width:100%;min-width:0}
+.schip .cn{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .schip .x2{border:none;background:rgba(0,0,0,.14);color:inherit;width:15px;height:15px;border-radius:999px;font-size:.58rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 :root[data-theme="dark"] .schip .x2{background:rgba(255,255,255,.2)}
 .sempty{font-size:.74rem;color:#9aa8a1}
@@ -245,4 +246,22 @@ label.chk input{accent-color:var(--accent);width:17px;height:17px}
   .lvl3{margin-left:24px}
   .lvl2{margin-left:16px}
   .lvl1{margin-left:8px}
+
+  /* Hela veckan utan sidoskroll: krymp marginaler, dagkolumn och typografi */
+  .wrap{padding:14px 6px 60px}
+  .schedcard{padding:8px 4px}
+  .sgrid{grid-template-columns:34px repeat(var(--cols,5),minmax(0,1fr));gap:3px}
+  .sdl{padding:4px 2px;border-radius:8px}
+  .sdl .dn{font-size:.68rem}
+  .sdl .dd{font-size:.6rem;white-space:nowrap}
+  .sph{padding:3px 1px}
+  .sph .pn{font-size:.58rem}
+  .sph .pt{font-size:.55rem}
+  .scell{padding:3px;min-height:44px;gap:3px;border-radius:7px}
+  .schips{gap:2px}
+  .schip{font-size:.6rem;padding:2px 3px 2px 5px;gap:2px;border-radius:6px}
+  .schip .x2{width:12px;height:12px;font-size:.5rem}
+  .scap{font-size:.56rem;padding:1px 5px}
+  .sbook{font-size:.85rem;padding:2px 0;border-radius:6px}
+  .sempty{font-size:.6rem}
 }

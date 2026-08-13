@@ -752,7 +752,7 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
     const mine = myIds.has(bk.profile_id);
     const canReq = !isPast && schedCtx.actingProfileId;
     const reqAttrs = canReq ? ` data-req="${bk.id}|${bk.profile_id}|${mine?1:0}" data-pinfo="${esc(p.name)}|${dISO}"` : "";
-    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}">${esc((bk.profile&&bk.profile.name)||"?")}${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
+    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}"><span class="cn">${esc((bk.profile&&bk.profile.name)||"?")}</span>${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
   }).join("");
   const empty = (!list.length && !canBook) ? `<span class="sempty">–</span>` : "";
   const badge = cap>1 ? `<span class="scap ${full?"ok":"need"}">${list.length}/${cap}</span>` : "";
