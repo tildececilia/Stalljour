@@ -85,6 +85,7 @@ function render(){
   if(view.name === "schedule" && view.stableId){ renderSchedule(view.stableId); return; }
   if(view.name === "chat" && view.stableId){ renderChat(view.stableId); return; }
   if(view.name === "mine" && view.stableId){ renderMyPasses(view.stableId); return; }
+  if(view.name === "requests" && view.stableId){ renderRequests(view.stableId); return; }
   if(view.name === "stable" && view.stableId){ renderStable(view.stableId); return; }
   renderHome();
 }
@@ -929,6 +930,7 @@ function buildProfileMenu(){
   m.innerHTML = `
     <div class="menuhead">${esc(session.email)}</div>
     ${bookAs}
+    <button class="menuitem" data-act="requests">${ic("swap")} Mina förfrågningar</button>
     ${tree}
     <button class="menuitem" data-act="newstable">${ic("plus")} Nytt stall</button>
     <button class="menuitem" data-act="logout">${ic("logout")} Logga ut</button>`;
@@ -976,6 +978,7 @@ function buildProfileMenu(){
 }
 async function profileAction(act){
   closeProfileMenu();
+  if(act==="requests"){ gotoView("requests"); return; }
   if(act==="newstable"){ didAutoRoute = true; view = { name:"home", stableId:null }; render(); return; }
   if(act==="logout"){ await db.auth.signOut(); view = { name:"home", stableId:null }; return; }
 }
@@ -1144,7 +1147,7 @@ async function resolveRequest(id, accept){
   const r = await db.rpc("resolve_pass_request", { p_request: id, p_accept: accept });
   if(r.error){ alert(r.error.message); return; }
   await refreshBellCount();
-  await openBellMenu();
+  if(el("bellMenu").classList.contains("open")) await openBellMenu();
   if(view.name === "schedule" && schedCtx) drawGrid(true);
 }
 el("btnBell").onclick = (e)=>{
@@ -1349,6 +1352,44 @@ function remWhen(ts){
   const tomorrow = isoDate(new Date(Date.now() + 86400000));
   const day = dISO === tISO ? "idag" : (dISO === tomorrow ? "imorgon" : DAY_NAMES[d.getDay()].toLowerCase() + " " + d.getDate() + "/" + (d.getMonth()+1));
   return `${day} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+/* ============ Mina förfrågningar ============ */
+async function renderRequests(stableId){
+  appEl.innerHTML = `<div id="reqShell"><div class="card"><div class="empty">Laddar…</div></div></div>`;
+  try{
+    const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    await refreshMyProfiles();
+    const r = await db.from("pass_request")
+      .select("id,type,status,created_at,from_profile,to_profile,booking(pass_date,pass_def(name,start_time)),fromP:profile!pass_request_from_profile_fkey(name),toP:profile!pass_request_to_profile_fkey(name)")
+      .eq("stable_id", stableId).order("created_at",{ascending:false});
+    if(r.error) throw r.error;
+    const mine = (r.data||[]).filter(q=> myProfileIds.has(q.from_profile) || myProfileIds.has(q.to_profile));
+    const list = mine.length ? mine.map(q=>{
+      const sent = myProfileIds.has(q.from_profile);
+      const other = sent ? ((q.toP && q.toP.name) || "?") : ((q.fromP && q.fromP.name) || "?");
+      const bk = q.booking || {};
+      const pn = (bk.pass_def && bk.pass_def.name) || "pass";
+      const d = bk.pass_date ? new Date(bk.pass_date + "T00:00:00") : null;
+      const when = d ? `${DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} · v.${isoWeekNumber(d)}` : "";
+      const txt = q.type === "take"
+        ? (sent ? `Du frågade <b>${esc(other)}</b> om att ta över deras pass` : `<b>${esc(other)}</b> vill ta över ditt pass`)
+        : (sent ? `Du erbjöd <b>${esc(other)}</b> ditt pass` : `<b>${esc(other)}</b> vill ge dig sitt pass`);
+      const stTag = q.status === "pending" ? `<span class="tagpill st-pend">väntar</span>`
+                  : q.status === "accepted" ? `<span class="tagpill">godkänd</span>`
+                  : `<span class="tagpill st-no">avböjd</span>`;
+      const cd = q.created_at ? new Date(q.created_at) : null;
+      const meta = `${esc(pn)}${when?` · ${esc(when)}`:""}${cd?` · skickad ${cd.getDate()}/${cd.getMonth()+1}`:""}`;
+      const btns = (!sent && q.status === "pending")
+        ? `<div class="notifbtns"><button class="btn primary sm" data-racc="${q.id}">Bekräfta</button><button class="btn sm" data-rdec="${q.id}">Avböj</button></div>` : "";
+      return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow">${txt}</div>${stTag}</div><div class="meta2">${meta}</div>${btns}</div>`;
+    }).join("") : `<div class="empty">Inga förfrågningar än. Klicka på ett pass i schemat för att skicka en.</div>`;
+    el("reqShell").innerHTML = `
+      <div class="card schedtop"><div class="schedeyebrow">Mina förfrågningar</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
+      <div class="card">${list}</div>`;
+    document.querySelectorAll("[data-racc]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-racc"), true); renderRequests(stableId); });
+    document.querySelectorAll("[data-rdec]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-rdec"), false); renderRequests(stableId); });
+  }catch(e){ el("reqShell").innerHTML = msg("Kunde inte hämta förfrågningar: " + (e.message||e), "err"); }
 }
 
 /* ============ Gruppchatt ============ */

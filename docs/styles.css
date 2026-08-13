@@ -224,6 +224,9 @@ label.chk input{accent-color:var(--accent);width:17px;height:17px}
 .statmeta{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:.9rem;margin-bottom:3px}
 .statbar{height:8px;border-radius:999px;background:var(--card-2);overflow:hidden}
 .statbar div{height:100%;background:var(--accent);border-radius:999px}
+.tagpill.st-pend{background:rgba(216,166,62,.18);color:#8a6209}
+:root[data-theme="dark"] .tagpill.st-pend{color:#e6be63}
+.tagpill.st-no{background:rgba(192,69,59,.12);color:var(--danger)}
 .mobonly{display:none}
 
 /* Mobil: hamburgermeny — bara logga, klocka och ☰ i headern */
