@@ -217,6 +217,8 @@ h1.title{font-family:var(--font-head);font-size:1.7rem;margin:0 0 6px}
 .cmsg .when{font-size:.64rem;opacity:.6;margin-top:2px;text-align:right}
 .chatinput{display:flex;gap:8px;margin-top:12px}
 .chatinput input{flex:1}
+label.chk{display:flex;align-items:center;gap:9px;font-size:.93rem;padding:7px 4px;cursor:pointer}
+label.chk input{accent-color:var(--accent);width:17px;height:17px}
 .mobonly{display:none}
 
 /* Mobil: hamburgermeny — bara logga, klocka och ☰ i headern */

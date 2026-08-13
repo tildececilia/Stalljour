@@ -66,6 +66,7 @@ const ICONS = {
   mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  swap: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   menu: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
   pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
@@ -271,7 +272,8 @@ function profileNode(p, groupId, keyPrefix){
     out.push(`<div class="editrow lvl2"><div class="editname"><input type="text" id="epr_name_${p.id}" value="${esc(p.name)}">
       <button class="btn primary sm" data-s="profile:${p.id}">Spara</button><button class="btn sm" data-c="1">Avbryt</button></div></div>`);
   } else {
-    out.push(`<div class="trow lvl2" data-t="${key}">${ic("user")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${tbtns("profile",p.id,may,curAdmin)}</div>`);
+    const pbtns = `<span class="tbtns">${curAdmin?`<button class="x" data-mv="${p.id}" title="Byt grupp">${ic("swap")}</button>`:""}${may?`<button class="x" data-e="profile:${p.id}" title="Ändra">${ic("pencil")}</button>`:""}${curAdmin?`<button class="x" data-d="profile:${p.id}" title="Ta bort">${ic("x")}</button>`:""}</span>`;
+    out.push(`<div class="trow lvl2" data-t="${key}">${ic("user")} ${esc(p.name)}${mine?` <span class="tagpill">du</span>`:""} <span class="meta2">${horses.length} häst${horses.length===1?"":"ar"}</span> ${caret(key)}${pbtns}</div>`);
   }
   if(stOpen[key]){
     const mails = (p.profile_member||[]).map(m=>m.email).filter(Boolean);
@@ -381,7 +383,53 @@ function renderStableTree(){
   host.querySelectorAll("[data-s]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); doSave(b.getAttribute("data-s")); });
   host.querySelectorAll("[data-c]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); cancelEdit(); });
   host.querySelectorAll("[data-add]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); doAdd(b.getAttribute("data-add")); });
+  host.querySelectorAll("[data-mv]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); moveProfileDialog(b.getAttribute("data-mv")); });
   host.querySelectorAll(".addhorse, .editrow").forEach(n=> n.onclick=(e)=> e.stopPropagation());
+}
+
+/* Byt grupp: flytta en profils hästar till en annan grupp (admin) */
+function moveProfileDialog(pid){
+  const p = stData.profiles.find(x=> x.id === pid); if(!p) return;
+  const horses = p.horse || [];
+  if(!horses.length){ infoDialog("Profilen har inga hästar än — det är hästarna som styr vilken grupp profilen tillhör. Lägg till en häst och välj grupp där.", "Inga hästar"); return; }
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  const box = document.createElement("div"); box.className = "modal"; ov.appendChild(box);
+  document.body.appendChild(ov);
+  const done = ()=> ov.remove();
+  ov.onclick = (e)=>{ if(e.target===ov) done(); };
+  let targetGid = null;
+  function stepGroup(){
+    box.innerHTML = `<h3>Byt grupp</h3><p>Flytta ${esc(p.name)} till:</p>
+      <div class="stack">${stData.groups.map(g=>`<button class="btn block" data-g="${g.id}"><span class="cdot" style="background:${g.color||'#4e9e6e'};margin-right:6px"></span>${esc(g.name)}</button>`).join("")}</div>
+      <div class="modal-btns" style="margin-top:14px"><button class="btn" id="mvAbort">Avbryt</button></div>`;
+    box.querySelector("#mvAbort").onclick = done;
+    box.querySelectorAll("[data-g]").forEach(b=> b.onclick = ()=>{
+      targetGid = b.getAttribute("data-g");
+      if(horses.length > 1) stepHorses(); else doMove(horses.map(h=> h.id));
+    });
+  }
+  function stepHorses(){
+    const gname = (stData.groups.find(g=> g.id === targetGid)||{}).name || "";
+    box.innerHTML = `<h3>Vilka hästar?</h3><p>Välj vilka av ${esc(p.name)}s hästar som ska flyttas till ${esc(gname)}:</p>
+      <div class="stack">${horses.map(h=>{
+        const cur = (stData.groups.find(g=> g.id === h.group_id)||{}).name || "ingen grupp";
+        return `<label class="chk"><input type="checkbox" data-h="${h.id}" checked> ${esc(h.name||"Häst")} <span class="meta2">(${esc(cur)})</span></label>`;
+      }).join("")}</div>
+      <div class="modal-btns" style="margin-top:14px"><button class="btn" id="mvBack">‹ Tillbaka</button><button class="btn primary" id="mvGo">Flytta</button></div>`;
+    box.querySelector("#mvBack").onclick = stepGroup;
+    box.querySelector("#mvGo").onclick = ()=>{
+      const ids = [...box.querySelectorAll("[data-h]")].filter(c=> c.checked).map(c=> c.getAttribute("data-h"));
+      if(!ids.length){ infoDialog("Bocka i minst en häst att flytta.", "Ingen häst vald"); return; }
+      doMove(ids);
+    };
+  }
+  async function doMove(ids){
+    const r = await db.from("horse").update({ group_id: targetGid }).in("id", ids);
+    done();
+    if(r.error){ alert("Kunde inte flytta: " + r.error.message); return; }
+    await reloadStableData();
+  }
+  stepGroup();
 }
 
 function startEdit(spec){
