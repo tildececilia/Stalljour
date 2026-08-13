@@ -862,12 +862,18 @@ async function refreshMyProfiles(){
   if(!r.error) myProfileIds = new Set((r.data||[]).map(x=> x.profile_id));
 }
 
+function bellRelevant(x){
+  const incoming = x.status === "pending" && myProfileIds.has(x.to_profile);
+  const outcome  = (x.status === "accepted" || x.status === "declined")
+                   && myProfileIds.has(x.from_profile) && !x.seen_by_requester;
+  return incoming || outcome;
+}
 async function refreshBellCount(){
   const b = el("bellBadge"); if(!b) return;
   if(!session){ b.style.display = "none"; return; }
   if(!myProfileIds.size) await refreshMyProfiles();
-  const r = await db.from("pass_request").select("id,to_profile").eq("status","pending");
-  const n = r.error ? 0 : (r.data||[]).filter(x=> myProfileIds.has(x.to_profile)).length;
+  const r = await db.from("pass_request").select("id,to_profile,from_profile,status,seen_by_requester");
+  const n = r.error ? 0 : (r.data||[]).filter(bellRelevant).length;
   if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
 }
 setInterval(()=>{ if(session) refreshBellCount(); }, 60000);
@@ -878,25 +884,41 @@ async function openBellMenu(){
   m.classList.add("open");
   await refreshMyProfiles();
   const r = await db.from("pass_request")
-    .select("id,type,to_profile,booking(pass_date,pass_def(name)),fromP:profile!pass_request_from_profile_fkey(name)")
-    .eq("status","pending").order("created_at",{ascending:false});
+    .select("id,type,status,seen_by_requester,to_profile,from_profile,booking(pass_date,pass_def(name)),fromP:profile!pass_request_from_profile_fkey(name),toP:profile!pass_request_to_profile_fkey(name)")
+    .order("created_at",{ascending:false});
   if(r.error){ m.innerHTML = `<div class="menuhead sub">Kunde inte hämta notiser</div>`; return; }
-  const mine = (r.data||[]).filter(x=> myProfileIds.has(x.to_profile));
+  const mine = (r.data||[]).filter(bellRelevant);
   if(!mine.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
   m.innerHTML = mine.map(q=>{
     const bk = q.booking || {};
     const pn = (bk.pass_def && bk.pass_def.name) || "pass";
     const d = bk.pass_date ? new Date(bk.pass_date + "T00:00:00") : null;
     const when = d ? `v.${isoWeekNumber(d)} · ${DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1}` : "";
-    const who = (q.fromP && q.fromP.name) || "Någon";
+    if(q.status === "pending"){
+      const who = (q.fromP && q.fromP.name) || "Någon";
+      const txt = q.type === "take"
+        ? `<b>${esc(who)}</b> vill ta över ditt pass`
+        : `<b>${esc(who)}</b> vill ge dig sitt pass`;
+      return `<div class="notif"><div>${txt}</div><div class="meta2">${esc(pn)} · ${esc(when)}</div>
+        <div class="notifbtns"><button class="btn primary sm" data-acc="${q.id}">Bekräfta</button><button class="btn sm" data-dec="${q.id}">Avböj</button></div></div>`;
+    }
+    // svar på min egen förfrågan
+    const who = (q.toP && q.toP.name) || "Profilen";
+    const yes = q.status === "accepted";
     const txt = q.type === "take"
-      ? `<b>${esc(who)}</b> vill ta över ditt pass`
-      : `<b>${esc(who)}</b> vill ge dig sitt pass`;
+      ? (yes ? `<b>${esc(who)}</b> godkände din förfrågan — passet är nu ditt ✓` : `<b>${esc(who)}</b> avböjde din förfrågan om att ta över passet`)
+      : (yes ? `<b>${esc(who)}</b> tog emot ditt pass ✓` : `<b>${esc(who)}</b> avböjde att ta ditt pass`);
     return `<div class="notif"><div>${txt}</div><div class="meta2">${esc(pn)} · ${esc(when)}</div>
-      <div class="notifbtns"><button class="btn primary sm" data-acc="${q.id}">Bekräfta</button><button class="btn sm" data-dec="${q.id}">Avböj</button></div></div>`;
+      <div class="notifbtns"><button class="btn sm" data-seen="${q.id}">Ok</button></div></div>`;
   }).join("");
   m.querySelectorAll("[data-acc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveRequest(b.getAttribute("data-acc"), true); });
   m.querySelectorAll("[data-dec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveRequest(b.getAttribute("data-dec"), false); });
+  m.querySelectorAll("[data-seen]").forEach(b=> b.onclick = async (e)=>{
+    e.stopPropagation();
+    await db.rpc("mark_request_seen", { p_request: b.getAttribute("data-seen") });
+    await refreshBellCount();
+    openBellMenu();
+  });
 }
 async function resolveRequest(id, accept){
   const r = await db.rpc("resolve_pass_request", { p_request: id, p_accept: accept });
