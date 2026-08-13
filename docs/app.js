@@ -109,12 +109,10 @@ function render(){
   renderHome();
 }
 
-/* ============ Inloggning (mejl-länk) ============ */
+/* ============ Inloggning (mejl-länk) + skapa stall ============ */
+let loginMode = "login";   // "login" | "create"
 function renderLogin(){
-  appEl.innerHTML = `
-    <div class="center">
-      <div class="card">
-        <h1 class="title">Välkommen!</h1>
+  const form = loginMode === "login" ? `
         <p class="sub">Logga in med din mejl. Vi skickar en länk — inget lösenord behövs.</p>
         <div id="loginMsg"></div>
         <div class="field">
@@ -122,24 +120,74 @@ function renderLogin(){
           <input type="email" id="email" placeholder="du@exempel.se" autocomplete="email">
         </div>
         <button class="btn primary block" id="loginBtn">Skicka inloggningslänk</button>
-        <div class="hint">Klicka på länken i mejlet så loggas du in. Du förblir inloggad på den här enheten.</div>
+        <div class="hint">Klicka på länken i mejlet så loggas du in. Du förblir inloggad på den här enheten.</div>`
+    : `
+        <p class="sub">Starta ett nytt stall eller en ridskola — du blir admin.</p>
+        <div id="loginMsg"></div>
+        <div class="field">
+          <label class="fld" for="cName2">Namn på stallet/ridskolan</label>
+          <input type="text" id="cName2" placeholder="t.ex. RHC" maxlength="40">
+        </div>
+        <div class="field">
+          <label class="fld" for="cKind2">Typ</label>
+          <select id="cKind2"><option value="stall">Stall (jour-schema)</option><option value="ridskola">Ridskola (lektioner)</option></select>
+        </div>
+        <div class="field">
+          <label class="fld" for="email">Din mejladress</label>
+          <input type="email" id="email" placeholder="du@exempel.se" autocomplete="email">
+        </div>
+        <button class="btn primary block" id="loginBtn">Skapa & skicka inloggningslänk</button>
+        <div class="hint">När du klickar på länken i mejlet loggas du in och stallet skapas — det dyker upp under "Mina stall".</div>`;
+  appEl.innerHTML = `
+    <div class="center">
+      <div class="card">
+        <h1 class="title">Välkommen!</h1>
+        <div style="display:flex;gap:8px;margin:4px 0 16px">
+          <button class="btn sm ${loginMode==="login"?"primary":""}" id="segLogin">Logga in</button>
+          <button class="btn sm ${loginMode==="create"?"primary":""}" id="segCreate">Skapa stall</button>
+        </div>
+        ${form}
       </div>
     </div>`;
+  el("segLogin").onclick = ()=>{ loginMode = "login"; renderLogin(); };
+  el("segCreate").onclick = ()=>{ loginMode = "create"; renderLogin(); };
   el("loginBtn").onclick = doLogin;
   el("email").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
-  el("email").focus();
+  (loginMode === "create" ? el("cName2") : el("email")).focus();
 }
 
 async function doLogin(){
   const mEl = el("loginMsg"), btn = el("loginBtn");
   const email = normEmail(el("email").value);
   if(!email.includes("@") || email.length < 5){ mEl.innerHTML = msg("Skriv en giltig mejladress.", "err"); return; }
+  if(loginMode === "create"){
+    const name = (el("cName2").value||"").trim();
+    if(!name){ mEl.innerHTML = msg("Ge stallet ett namn.", "err"); return; }
+    try{ localStorage.setItem("stalljour.pendingCreate", JSON.stringify({ name, kind: el("cKind2").value })); }catch(e){}
+  }
+  const btnLabel = btn.textContent;
   btn.classList.add("spin"); btn.textContent = "…";
   const redirect = window.location.origin + window.location.pathname;
   const { error } = await db.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: redirect } });
-  btn.classList.remove("spin"); btn.textContent = "Skicka inloggningslänk";
+  btn.classList.remove("spin"); btn.textContent = btnLabel;
   if(error){ mEl.innerHTML = msg("Kunde inte skicka: " + error.message, "err"); return; }
-  mEl.innerHTML = msg("Vi skickade en inloggningslänk till " + email + ". Öppna mejlet och klicka på länken.", "ok");
+  mEl.innerHTML = msg(loginMode === "create"
+    ? "Vi skickade en länk till " + email + ". Klicka på den så loggas du in och stallet skapas."
+    : "Vi skickade en inloggningslänk till " + email + ". Öppna mejlet och klicka på länken.", "ok");
+}
+
+async function handlePendingCreate(){
+  if(!session) return;
+  let raw = null; try{ raw = localStorage.getItem("stalljour.pendingCreate"); }catch(e){}
+  if(!raw) return;
+  try{ localStorage.removeItem("stalljour.pendingCreate"); }catch(e){}
+  let p; try{ p = JSON.parse(raw); }catch(e){ return; }
+  if(!p || !p.name) return;
+  const { data, error } = await db.rpc("create_stable", { p_name: p.name, p_kind: p.kind || "stall" });
+  if(error){ alert("Kunde inte skapa " + p.name + ": " + error.message); return; }
+  didAutoRoute = true;
+  view = { name: "stable", stableId: data };
+  render();
 }
 
 
@@ -2011,5 +2059,5 @@ async function drawSchoolWeek(){
 
 /* ============ Start ============ */
 function setSessionFrom(s){ session = s ? { id: s.user.id, email: normEmail(s.user.email) } : null; }
-db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session) refreshMyProfiles().then(refreshBellCount); });
-db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session) refreshMyProfiles().then(refreshBellCount); });
+db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session){ refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
+db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session){ refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
