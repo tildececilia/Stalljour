@@ -229,7 +229,7 @@ label.chk input{accent-color:var(--accent);width:17px;height:17px}
   header.app .btn .lbl{display:none}
   header.app .btn .icn{width:19px;height:19px}
   .mobonly{display:block}
-  #btnSchedule,#btnSettings,#btnProfile,#btnChat,#btnTheme{display:none !important}
+  #btnSchedule,#btnSettings,#btnProfile,#btnChat,#btnMine,#btnTheme{display:none !important}
   .menu{min-width:240px;max-width:calc(100vw - 24px)}
   .addhorse{flex-direction:column;align-items:stretch}
   .addhorse input,.addhorse select{min-width:0;width:100%;flex:none}

@@ -67,6 +67,7 @@ const ICONS = {
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   swap: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
   menu: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
   pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
@@ -82,6 +83,7 @@ function render(){
   if(!session){ didAutoRoute = false; renderLogin(); return; }
   if(view.name === "schedule" && view.stableId){ renderSchedule(view.stableId); return; }
   if(view.name === "chat" && view.stableId){ renderChat(view.stableId); return; }
+  if(view.name === "mine" && view.stableId){ renderMyPasses(view.stableId); return; }
   if(view.name === "stable" && view.stableId){ renderStable(view.stableId); return; }
   renderHome();
 }
@@ -230,7 +232,7 @@ async function reloadStableData(){
     db.from("duty_group").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("category").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("pass_def").select("*, category(name)").eq("stable_id", sid).order("sort_order"),
-    db.from("profile").select("id,name,profile_member(email),horse(id,name,group_id)").eq("stable_id", sid).order("created_at")
+    db.from("profile").select("id,name,remind1_min,remind2_min,profile_member(email),horse(id,name,group_id)").eq("stable_id", sid).order("created_at")
   ]);
   const err = g.error || c.error || p.error || pr.error;
   if(err){ el("stTreeCard").innerHTML = msg("Kunde inte hämta stallets data: " + err.message, "err"); return; }
@@ -280,6 +282,13 @@ function profileNode(p, groupId, keyPrefix){
     mails.forEach(em=> out.push(`<div class="tleaf lvl3">${ic("mail")} ${esc(em)}${may?`<span class="tbtns"><button class="x" data-d="mail:${p.id}|${encodeURIComponent(em)}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
     if(!mails.length) out.push(`<div class="tleaf lvl3 tmuted">Ingen mejl kopplad än</div>`);
     if(may) out.push(`<div class="addhorse lvl3"><input type="email" id="in_mail_${keyPrefix}_${p.id}" placeholder="Lägg till mejladress"><button class="btn sm" data-add="mail:${keyPrefix}:${p.id}">+ Mejl</button></div>`);
+    if(may){
+      const remSel = (slot)=>{ const cur = String(p["remind"+slot+"_min"] || "");
+        return `<select data-rem="${slot}:${p.id}">${REMIND_OPTS.map(([v,l])=>`<option value="${v}"${cur===v?" selected":""}>${l}</option>`).join("")}</select>`; };
+      out.push(`<div class="tleaf lvl3 tmuted" style="font-weight:700">⏰ Påminnelser om pass (visas i klockan)</div>`);
+      out.push(`<div class="addhorse lvl3"><span class="meta2" style="min-width:96px">Påminnelse 1</span>${remSel(1)}</div>`);
+      out.push(`<div class="addhorse lvl3"><span class="meta2" style="min-width:96px">Påminnelse 2</span>${remSel(2)}</div>`);
+    }
     horses.forEach(h=> out.push(horseRow(h, mine)));
     if(may){
       const gsel = `<option value="">Ingen grupp</option>` + stData.groups.map(g=>`<option value="${g.id}"${g.id===groupId?" selected":""}>${esc(g.name)}</option>`).join("");
@@ -384,6 +393,13 @@ function renderStableTree(){
   host.querySelectorAll("[data-c]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); cancelEdit(); });
   host.querySelectorAll("[data-add]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); doAdd(b.getAttribute("data-add")); });
   host.querySelectorAll("[data-mv]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); moveProfileDialog(b.getAttribute("data-mv")); });
+  host.querySelectorAll("[data-rem]").forEach(sel=> sel.onchange = async ()=>{
+    const [slot, pid] = sel.getAttribute("data-rem").split(":");
+    const upd = {}; upd["remind"+slot+"_min"] = sel.value ? parseInt(sel.value,10) : null;
+    const r = await db.from("profile").update(upd).eq("id", pid);
+    if(r.error) alert("Kunde inte spara påminnelsen: " + r.error.message);
+    else refreshBellCount();
+  });
   host.querySelectorAll(".addhorse, .editrow").forEach(n=> n.onclick=(e)=> e.stopPropagation());
 }
 
@@ -771,7 +787,7 @@ applyTheme(theme);
 el("btnTheme").onclick = ()=>{ theme = theme==="dark"?"light":"dark"; try{ localStorage.setItem("stalljour.theme", theme); }catch(e){} applyTheme(theme); };
 
 function updateHeader(){
-  ["btnProfile","btnSchedule","btnSettings","btnBell","btnChat","btnBurger"].forEach(id=>{
+  ["btnProfile","btnSchedule","btnSettings","btnBell","btnChat","btnMine","btnBurger"].forEach(id=>{
     const b = el(id); if(b) b.style.display = session ? "" : "none";
   });
 }
@@ -867,6 +883,7 @@ function openBurgerMenu(){
   const m = el("burgerMenu");
   m.innerHTML = `
     <button class="menuitem" data-bg="schedule">${ic("calendar")} Schema</button>
+    <button class="menuitem" data-bg="mine">${ic("list")} Mina pass</button>
     <button class="menuitem" data-bg="chat">${ic("message")} Chatt</button>
     <button class="menuitem" data-bg="stable">${ic("settings")} Inställningar</button>
     <button class="menuitem" data-bg="theme">${ic(theme==="dark"?"sun":"moon")} ${theme==="dark"?"Ljust läge":"Mörkt läge"}</button>
@@ -888,6 +905,7 @@ el("btnBurger").onclick = (e)=>{
   if(!wasOpen) openBurgerMenu();
 };
 el("btnChat").onclick = ()=> gotoView("chat");
+el("btnMine").onclick = ()=> gotoView("mine");
 document.addEventListener("click", (e)=>{ if(!e.target.closest(".menuwrap")) closeMenus(); });
 
 async function gotoView(name){
@@ -954,7 +972,8 @@ async function refreshBellCount(){
   if(!session){ b.style.display = "none"; return; }
   if(!myProfileIds.size) await refreshMyProfiles();
   const r = await db.from("pass_request").select("id,to_profile,from_profile,status,seen_by_requester");
-  const n = r.error ? 0 : (r.data||[]).filter(bellRelevant).length;
+  let n = r.error ? 0 : (r.data||[]).filter(bellRelevant).length;
+  try{ dueReminders = await getDueReminders(); n += dueReminders.length; }catch(e){}
   if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
 }
 setInterval(()=>{ if(session) refreshBellCount(); }, 60000);
@@ -969,8 +988,13 @@ async function openBellMenu(){
     .order("created_at",{ascending:false});
   if(r.error){ m.innerHTML = `<div class="menuhead sub">Kunde inte hämta notiser</div>`; return; }
   const mine = (r.data||[]).filter(bellRelevant);
-  if(!mine.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
-  m.innerHTML = mine.map(q=>{
+  let rems = [];
+  try{ rems = await getDueReminders(); }catch(e){}
+  if(!mine.length && !rems.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const remHtml = rems.map(rm=>
+    `<div class="notif"><div>⏰ Påminnelse: du har pass <b>${esc(rm.passName)}</b></div><div class="meta2">${esc(remWhen(rm.start))}</div>
+      <div class="notifbtns"><button class="btn sm" data-remok="${esc(rm.key)}">Ok</button></div></div>`).join("");
+  m.innerHTML = remHtml + mine.map(q=>{
     const bk = q.booking || {};
     const pn = (bk.pass_def && bk.pass_def.name) || "pass";
     const d = bk.pass_date ? new Date(bk.pass_date + "T00:00:00") : null;
@@ -997,6 +1021,12 @@ async function openBellMenu(){
   m.querySelectorAll("[data-seen]").forEach(b=> b.onclick = async (e)=>{
     e.stopPropagation();
     await db.rpc("mark_request_seen", { p_request: b.getAttribute("data-seen") });
+    await refreshBellCount();
+    openBellMenu();
+  });
+  m.querySelectorAll("[data-remok]").forEach(b=> b.onclick = async (e)=>{
+    e.stopPropagation();
+    try{ localStorage.setItem(b.getAttribute("data-remok"), "1"); }catch(err){}
     await refreshBellCount();
     openBellMenu();
   });
@@ -1093,6 +1123,78 @@ async function sendPassRequest(type, bookingId, fromP, toP, label){
 
 /* ============ Ikoner i headern ============ */
 document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
+
+/* ============ Mina pass ============ */
+async function renderMyPasses(stableId){
+  appEl.innerHTML = `<div id="mineShell"><div class="card"><div class="empty">Laddar…</div></div></div>`;
+  try{
+    const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    const pr = await db.from("profile").select("id,name,profile_member(email)").eq("stable_id", stableId); if(pr.error) throw pr.error;
+    const myIds = pr.data.filter(p=> (p.profile_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(p=> p.id);
+    const b = await db.from("booking").select("id,pass_date,profile_id,profile(name),pass_def(name,start_time)")
+      .eq("stable_id", stableId).gte("pass_date", isoDate(new Date())).order("pass_date");
+    if(b.error) throw b.error;
+    const rows = (b.data||[]).filter(x=> myIds.includes(x.profile_id))
+      .map(x=> ({ ...x, t: (x.pass_def && x.pass_def.start_time) || "" }))
+      .sort((a,c)=> a.pass_date === c.pass_date ? (a.t < c.t ? -1 : 1) : (a.pass_date < c.pass_date ? -1 : 1));
+    const multi = myIds.length > 1;
+    const tISO = isoDate(new Date());
+    const list = rows.length ? rows.map(x=>{
+      const d = new Date(x.pass_date + "T00:00:00");
+      const today = x.pass_date === tISO;
+      return `<div class="row">
+        <div class="grow"><div class="nm">${esc((x.pass_def && x.pass_def.name) || "Pass")} <span class="meta2">${esc(x.t)}</span></div>
+        <div class="meta">${today ? "Idag" : DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} · v.${isoWeekNumber(d)}${multi ? ` · ${esc((x.profile && x.profile.name) || "")}` : ""}</div></div>
+        ${today ? `<span class="tagpill">idag</span>` : ""}
+      </div>`;
+    }).join("") : `<div class="empty">Du har inga kommande pass bokade.</div>`;
+    el("mineShell").innerHTML = `
+      <div class="card schedtop"><div class="schedeyebrow">Mina pass</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
+      <div class="card"><div class="list">${list}</div></div>`;
+  }catch(e){ el("mineShell").innerHTML = msg("Kunde inte hämta dina pass: " + (e.message||e), "err"); }
+}
+
+/* ============ Påminnelser (visas i klockan) ============ */
+const REMIND_OPTS = [["","Av"],["60","1 timme innan"],["1440","1 dag innan"],["2880","2 dagar innan"]];
+let dueReminders = [];
+
+async function getDueReminders(){
+  if(!session) return [];
+  if(!myProfileIds.size) await refreshMyProfiles();
+  if(!myProfileIds.size) return [];
+  const pr = await db.from("profile").select("id,remind1_min,remind2_min").in("id", [...myProfileIds]);
+  const withRem = (pr.data||[]).filter(p=> p.remind1_min || p.remind2_min);
+  if(!withRem.length) return [];
+  const b = await db.from("booking").select("id,pass_date,profile_id,pass_def(name,start_time)")
+    .in("profile_id", withRem.map(p=> p.id)).gte("pass_date", isoDate(new Date()));
+  if(b.error) return [];
+  const now = Date.now(); const out = []; const seenBk = new Set();
+  (b.data||[]).forEach(bk=>{
+    const pd = bk.pass_def || {};
+    const t = /^\d{2}:\d{2}/.test(pd.start_time||"") ? pd.start_time.slice(0,5) : "08:00";
+    const start = new Date(bk.pass_date + "T" + t + ":00").getTime();
+    if(start < now) return;
+    const prof = withRem.find(p=> p.id === bk.profile_id); if(!prof) return;
+    [prof.remind1_min, prof.remind2_min].forEach((m, i)=>{
+      if(!m || seenBk.has(bk.id)) return;
+      if(now >= start - m*60000){
+        const key = "stalljour.rem_" + bk.id + "_" + i;
+        let dismissed = false; try{ dismissed = !!localStorage.getItem(key); }catch(e){}
+        if(dismissed) return;
+        seenBk.add(bk.id);
+        out.push({ key, passName: pd.name || "Pass", start });
+      }
+    });
+  });
+  return out.sort((a,c)=> a.start - c.start);
+}
+function remWhen(ts){
+  const d = new Date(ts);
+  const dISO = isoDate(d), tISO = isoDate(new Date());
+  const tomorrow = isoDate(new Date(Date.now() + 86400000));
+  const day = dISO === tISO ? "idag" : (dISO === tomorrow ? "imorgon" : DAY_NAMES[d.getDay()].toLowerCase() + " " + d.getDate() + "/" + (d.getMonth()+1));
+  return `${day} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
 
 /* ============ Gruppchatt ============ */
 let chatPollTimer = null;
