@@ -773,7 +773,7 @@ async function drawGrid(keepScroll){
   if(keepScroll) window.scrollTo(0, scrollY);
 
   host.querySelectorAll("[data-book]").forEach(btn=> btn.onclick = ()=> bookCell(btn.getAttribute("data-book"), btn.getAttribute("data-date")));
-  host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = (e)=>{ e.stopPropagation(); cancelBooking(btn.getAttribute("data-cancel"), btn.getAttribute("data-cinfo")); });
+  host.querySelectorAll("[data-cancel]").forEach(btn=> btn.onclick = (e)=>{ e.stopPropagation(); cancelBooking(btn.getAttribute("data-cancel"), btn.getAttribute("data-cinfo"), btn.getAttribute("data-cprof")); });
   host.querySelectorAll("[data-req]").forEach(chip=> chip.onclick = ()=> onChipClick(chip.getAttribute("data-req"), chip.getAttribute("data-pinfo")));
   const lt = host.querySelector("[data-logtoggle]");
   if(lt) lt.onclick = ()=>{
@@ -794,15 +794,14 @@ async function loadWeekLog(){
   const endISO = isoDate(endD);
   const fmt = t=>{ const d = new Date(t); return `${d.getDate()}/${d.getMonth()+1} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
   const passDay = pd=>{ const d = new Date(pd + "T00:00:00"); return `${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}`; };
-  const [bq, rq] = await Promise.all([
-    db.from("booking").select("created_at,pass_date,profile(name),pass_def(name)").eq("stable_id", schedCtx.stable.id).gte("pass_date", startISO).lte("pass_date", endISO),
+  const [cq, rq] = await Promise.all([
+    db.from("booking_log").select("created_at,pass_date,pass_name,profile_name").eq("stable_id", schedCtx.stable.id).gte("pass_date", startISO).lte("pass_date", endISO),
     db.from("pass_request").select("type,status,created_at,resolved_at,booking(pass_date,pass_def(name)),fromP:profile!pass_request_from_profile_fkey(name),toP:profile!pass_request_to_profile_fkey(name)").eq("stable_id", schedCtx.stable.id)
   ]);
-  if(bq.error || rq.error){ lb.innerHTML = msg("Kunde inte hämta loggen.", "err"); return; }
+  if(rq.error){ lb.innerHTML = msg("Kunde inte hämta loggen.", "err"); return; }
   const ev = [];
-  (bq.data||[]).forEach(b=>{
-    if(!b.created_at) return;
-    ev.push({ t: b.created_at, txt: `<b>${esc((b.profile&&b.profile.name)||"?")}</b> bokade ${esc((b.pass_def&&b.pass_def.name)||"pass")} ${passDay(b.pass_date)}` });
+  if(!cq.error) (cq.data||[]).forEach(c=>{
+    ev.push({ t: c.created_at, txt: `<b>${esc(c.profile_name||"?")}</b> tog bort sitt pass ${esc(c.pass_name||"")} ${passDay(c.pass_date)}` });
   });
   (rq.data||[]).forEach(q=>{
     const bk = q.booking || {};
@@ -823,7 +822,7 @@ async function loadWeekLog(){
   ev.sort((a,c)=> new Date(c.t) - new Date(a.t));
   lb.innerHTML = ev.length
     ? ev.map(e=> `<div class="logrow"><span class="logtime">${fmt(e.t)}</span><span>${e.txt}</span></div>`).join("")
-    : `<div class="empty">Inget har hänt kring den här veckans pass än.</div>`;
+    : `<div class="empty">Inga byten eller borttagna pass den här veckan än.</div>`;
 }
 
 function scheduleCell(p, d, dISO, map, myIds, tISO){
@@ -838,7 +837,7 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
     const mine = myIds.has(bk.profile_id);
     const canReq = !isPast && schedCtx.actingProfileId;
     const reqAttrs = canReq ? ` data-req="${bk.id}|${bk.profile_id}|${mine?1:0}" data-pinfo="${esc(p.name)}|${dISO}"` : "";
-    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} style="${profChipStyle(bk.profile_id)}" title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}"><span class="cn">${esc((bk.profile&&bk.profile.name)||"?")}</span>${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" title="Avboka">✕</button>`:""}</span>`;
+    return `<span class="schip${canReq?" clickable":""}"${reqAttrs} style="${profChipStyle(bk.profile_id)}" title="${canReq?(mine?"Ge bort passet":"Fråga om att ta över"):""}"><span class="cn">${esc((bk.profile&&bk.profile.name)||"?")}</span>${(mine&&!isPast)?`<button class="x2" data-cancel="${bk.id}" data-cinfo="${esc(p.name)}|${dISO}" data-cprof="${esc((bk.profile&&bk.profile.name)||"?")}" title="Avboka">✕</button>`:""}</span>`;
   }).join("");
   const empty = (!list.length && !canBook) ? `<span class="sempty">–</span>` : "";
   const badge = cap>1 ? `<span class="scap ${full?"ok":"need"}">${list.length}/${cap}</span>` : "";
@@ -878,18 +877,25 @@ async function bookCell(passId, dISO){
   if(r.error){ alert("Kunde inte boka: " + r.error.message); return; }
   await drawGrid(true);
 }
-async function cancelBooking(id, info){
+async function cancelBooking(id, info, profName){
   let txt = "Är du säker på att du vill ta bort ditt pass?";
+  let pn = "", pd = "";
   if(info){
     const j = info.lastIndexOf("|");
-    const pn = info.slice(0, j), pd = info.slice(j+1);
+    pn = info.slice(0, j); pd = info.slice(j+1);
     const d = new Date(pd + "T00:00:00");
     txt = `Är du säker på att du vill ta bort ditt pass ${pn}, ${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}?`;
   }
   if(!(await confirmDialog(txt, { title: "Ta bort pass", okText: "Ja, ta bort" }))) return;
   const r = await db.from("booking").delete().eq("id", id);
   if(r.error){ alert("Kunde inte avboka: " + r.error.message); return; }
+  logCancel(pn, pd, profName);
   await drawGrid(true);
+}
+function logCancel(passName, passDate, profileName){
+  if(!passName || !passDate || !schedCtx) return;
+  db.from("booking_log").insert({ stable_id: schedCtx.stable.id, pass_date: passDate, pass_name: passName, profile_name: profileName || "?" })
+    .then(()=>{}, ()=>{});   // loggen är "best effort" – stör aldrig avbokningen
 }
 
 /* ---- Rättvis fördelning: måltal per profil, viktat efter hästar ---- */
@@ -1403,6 +1409,8 @@ async function myPassAction(bid, ownerId, pn, pd){
     if(!(await confirmDialog(`Är du säker på att du vill ta bort ditt pass ${label}?`, { title:"Ta bort pass", okText:"Ja, ta bort" }))) return;
     const r = await db.from("booking").delete().eq("id", bid);
     if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
+    const owner = (schedCtx.profiles||[]).find(p=> p.id === ownerId);
+    logCancel(pn, pd, owner ? owner.name : "?");
     renderMyPasses(view.stableId);
   } else {
     schedCtx.actingProfileId = ownerId;   // "din grupp"-markeringen i väljaren utgår från passets profil
