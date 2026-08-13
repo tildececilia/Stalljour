@@ -1129,8 +1129,11 @@ async function renderMyPasses(stableId){
   appEl.innerHTML = `<div id="mineShell"><div class="card"><div class="empty">Laddar…</div></div></div>`;
   try{
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
-    const pr = await db.from("profile").select("id,name,profile_member(email)").eq("stable_id", stableId); if(pr.error) throw pr.error;
+    const g  = await db.from("duty_group").select("*").eq("stable_id", stableId).order("sort_order"); if(g.error) throw g.error;
+    const pr = await db.from("profile").select("id,name,profile_member(email),horse(group_id)").eq("stable_id", stableId); if(pr.error) throw pr.error;
     const myIds = pr.data.filter(p=> (p.profile_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(p=> p.id);
+    // gör ge bort-flödet (gruppväljaren) användbart härifrån också
+    schedCtx = { stable: st.data, groups: g.data, profiles: pr.data, passes: [], myProfiles: pr.data.filter(p=> myIds.includes(p.id)), actingProfileId: myIds[0] || null };
     const b = await db.from("booking").select("id,pass_date,profile_id,profile(name),pass_def(name,start_time)")
       .eq("stable_id", stableId).gte("pass_date", isoDate(new Date())).order("pass_date");
     if(b.error) throw b.error;
@@ -1142,16 +1145,59 @@ async function renderMyPasses(stableId){
     const list = rows.length ? rows.map(x=>{
       const d = new Date(x.pass_date + "T00:00:00");
       const today = x.pass_date === tISO;
-      return `<div class="row">
-        <div class="grow"><div class="nm">${esc((x.pass_def && x.pass_def.name) || "Pass")} <span class="meta2">${esc(x.t)}</span></div>
+      const pn = (x.pass_def && x.pass_def.name) || "Pass";
+      return `<button class="row" data-mp="${x.id}|${x.profile_id}" data-mpinfo="${esc(pn)}|${x.pass_date}">
+        <div class="grow"><div class="nm">${esc(pn)} <span class="meta2">${esc(x.t)}</span></div>
         <div class="meta">${today ? "Idag" : DAY_NAMES[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} · v.${isoWeekNumber(d)}${multi ? ` · ${esc((x.profile && x.profile.name) || "")}` : ""}</div></div>
         ${today ? `<span class="tagpill">idag</span>` : ""}
-      </div>`;
+        <span class="chev">›</span>
+      </button>`;
     }).join("") : `<div class="empty">Du har inga kommande pass bokade.</div>`;
     el("mineShell").innerHTML = `
       <div class="card schedtop"><div class="schedeyebrow">Mina pass</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
       <div class="card"><div class="list">${list}</div></div>`;
+    document.querySelectorAll("[data-mp]").forEach(btn=> btn.onclick = ()=>{
+      const [bid, owner] = btn.getAttribute("data-mp").split("|");
+      const info = btn.getAttribute("data-mpinfo");
+      const j = info.lastIndexOf("|");
+      myPassAction(bid, owner, info.slice(0, j), info.slice(j+1));
+    });
   }catch(e){ el("mineShell").innerHTML = msg("Kunde inte hämta dina pass: " + (e.message||e), "err"); }
+}
+
+function actionDialog(title, text, actions){
+  return new Promise(res=>{
+    const ov = document.createElement("div"); ov.className = "modal-ov";
+    ov.innerHTML = `<div class="modal"><h3>${esc(title)}</h3><p>${esc(text)}</p>
+      <div class="stack">${actions.map((a,i)=>`<button class="${a.cls||'btn'} block" data-a="${i}">${esc(a.label)}</button>`).join("")}</div>
+      <div class="modal-btns" style="margin-top:14px"><button class="btn" id="aCancel">Avbryt</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = v =>{ ov.remove(); res(v); };
+    ov.querySelector("#aCancel").onclick = ()=> done(null);
+    ov.onclick = (e)=>{ if(e.target===ov) done(null); };
+    ov.querySelectorAll("[data-a]").forEach(b=> b.onclick = ()=> done(actions[+b.getAttribute("data-a")].v));
+  });
+}
+
+async function myPassAction(bid, ownerId, pn, pd){
+  const d = new Date(pd + "T00:00:00");
+  const label = `${pn}, ${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}`;
+  const choice = await actionDialog("Ditt pass", label, [
+    { v:"give", label:"Ge bort passet (skicka förfrågan)", cls:"btn primary" },
+    { v:"del",  label:"Ta bort passet (avboka)", cls:"btn danger-solid" }
+  ]);
+  if(!choice) return;
+  if(choice === "del"){
+    if(!(await confirmDialog(`Är du säker på att du vill ta bort ditt pass ${label}?`, { title:"Ta bort pass", okText:"Ja, ta bort" }))) return;
+    const r = await db.from("booking").delete().eq("id", bid);
+    if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
+    renderMyPasses(view.stableId);
+  } else {
+    schedCtx.actingProfileId = ownerId;   // "din grupp"-markeringen i väljaren utgår från passets profil
+    const target = await chooseProfileDialog(ownerId);
+    if(!target) return;
+    await sendPassRequest("give", bid, ownerId, target, label);
+  }
 }
 
 /* ============ Påminnelser (visas i klockan) ============ */
