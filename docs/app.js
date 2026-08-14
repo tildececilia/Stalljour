@@ -1818,11 +1818,11 @@ async function reloadSchool(){
   const [g,c,s,h,l,gs,sf,sfc] = await Promise.all([
     db.from("rs_group").select("*, category(name)").eq("stable_id", sid).order("weekday").order("start_time"),
     db.from("category").select("*").eq("stable_id", sid).order("sort_order"),
-    db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", sid).order("name"),
+    db.from("rs_student").select("id,name,description,rs_student_member(email)").eq("stable_id", sid).order("name"),
     db.from("rs_horse").select("*").eq("stable_id", sid).order("name"),
     db.from("rs_leader").select("*"),
     db.from("rs_group_student").select("*"),
-    db.from("rs_staff").select("id,name,category_id,rs_staff_category(name),rs_staff_member(email)").eq("stable_id", sid).order("name"),
+    db.from("rs_staff").select("id,name,description,category_id,rs_staff_category(name),rs_staff_member(email)").eq("stable_id", sid).order("name"),
     db.from("rs_staff_category").select("*").eq("stable_id", sid).order("sort_order")
   ]);
   const err = g.error || c.error || s.error || h.error;
@@ -1834,6 +1834,22 @@ async function reloadSchool(){
 }
 
 function scCaret(k){ return `<span class="caret">${scOpen[k]?"▾":"▸"}</span>`; }
+/* Beskrivning: visas som textarea vid redigering först när man valt "Lägg till beskrivning" (eller om en redan finns) */
+function scDescField(key, val){
+  if((val||"").trim() || scOpen["desc_"+key])
+    return `<div class="field"><label class="fld">Beskrivning</label><textarea id="scdesc_${key}" rows="2" placeholder="t.ex. rädd för stora hästar">${esc(val||"")}</textarea></div>`;
+  return `<div class="field"><button class="btn sm" type="button" data-scdesc="${key}">+ Lägg till beskrivning</button></div>`;
+}
+function scDescVal(key){ const n = el("scdesc_"+key); if(!n) return undefined; const v = n.value.trim(); return v || null; }
+function scDescLeaf(val, lvl){ return (val||"").trim() ? `<div class="tleaf lvl${lvl} tmuted tdesc">${esc(val)}</div>` : ""; }
+/* Litet redigeringsformulär för saker som bara har namn + beskrivning */
+function scNameEditRow(kind, key, id, name, desc, lvl, withDesc){
+  return `<div class="editrow lvl${lvl}">
+    <div class="field"><label class="fld">Namn</label><input type="text" id="scn_${key}" value="${esc(name)}"></div>
+    ${withDesc === false ? "" : scDescField(key, desc)}
+    <div class="editbtns"><button class="btn primary sm" data-scs="${kind}:${id}">Spara</button><button class="btn sm" data-scc="${key}">Avbryt</button></div>
+  </div>`;
+}
 function scGroupMeta(g){
   const cat = g.category && g.category.name;
   const n = scData.gstud.filter(x=> x.group_id === g.id).length;
@@ -1865,17 +1881,22 @@ function renderSchoolTree(){
           <div class="field"><label class="fld">Längd</label><select id="scg_dur_${g.id}">${dO}</select></div>
           <div class="field"><label class="fld">Antal platser</label><select id="scg_cap_${g.id}">${capO}</select></div>
           <div class="field"><label class="fld">Hästbyte efter</label><select id="scg_rot_${g.id}">${rotO}</select></div>
+          ${scDescField(g.id, g.description)}
           <div class="editbtns"><button class="btn primary sm" data-scs="group:${g.id}">Spara</button><button class="btn sm" data-scc="${g.id}">Avbryt</button></div>
         </div>`);
       } else {
         const btns = curAdmin ? `<span class="tbtns"><button class="x" data-sce="${g.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="group:${g.id}" title="Ta bort">${ic("x")}</button></span>` : "";
         t.push(`<div class="trow lvl1" data-t="${key}">${esc(g.name)} ${scCaret(key)}${btns}</div>`);
         t.push(`<div class="tleaf lvl2 tmuted">${esc(scGroupMeta(g))}</div>`);
+        t.push(scDescLeaf(g.description, 2));
       }
       if(scOpen[key]){
         const leaders = scData.leaders.filter(x=> x.group_id === g.id);
         t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Ledare</div>`);
-        leaders.forEach(ld=> t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(ld.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="leader:${ld.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+        leaders.forEach(ld=>{
+          if(curAdmin && scOpen["edit_l_"+ld.id]){ t.push(scNameEditRow("leader", "l_"+ld.id, ld.id, ld.name, null, 2, false)); return; }
+          t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(ld.name)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="l_${ld.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="leader:${ld.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+        });
         if(!leaders.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen ledare än</div>`);
         if(curAdmin) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_leader_${g.id}" placeholder="Ledarens namn"><button class="btn sm" data-sca="leader:${g.id}">+ Ledare</button></div>`);
         const inGroup = scData.gstud.filter(x=> x.group_id === g.id).map(x=> x.student_id);
@@ -1891,35 +1912,47 @@ function renderSchoolTree(){
       }
     });
     if(curAdmin){
-      const catO = `<option value="">Ingen kategori</option>` + scData.cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
-      const wdO = [1,2,3,4,5,6,7].map(w=>`<option value="${w}">${RS_WD[w]}</option>`).join("");
-      const tO = TIME_OPTIONS.map(x=>`<option value="${x}"${x==="17:00"?" selected":""}>${x}</option>`).join("");
-      const dO = RS_DUR.map(d=>`<option value="${d}"${d===60?" selected":""}>${d} min</option>`).join("");
-      const capO = (()=>{let o="";for(let i=1;i<=20;i++)o+=`<option value="${i}"${i===8?" selected":""}>${i}</option>`;return o;})();
-      const rotO = (()=>{let o="";for(let i=1;i<=10;i++)o+=`<option value="${i}">${i} gång${i>1?"er":""}</option>`;return o;})();
-      t.push(`<div class="editrow lvl1">
-        <div class="field"><label class="fld">Ny grupp — namn</label><input type="text" id="scin_group" placeholder="t.ex. Nybörjare måndag"></div>
-        <div class="field"><label class="fld">Kategori</label><select id="scin_gcat">${catO}</select></div>
-        <div class="field"><label class="fld">Veckodag</label><select id="scin_gwd">${wdO}</select></div>
-        <div class="field"><label class="fld">Starttid</label><select id="scin_gtime">${tO}</select></div>
-        <div class="field"><label class="fld">Lektionslängd</label><select id="scin_gdur">${dO}</select></div>
-        <div class="field"><label class="fld">Antal platser</label><select id="scin_gcap">${capO}</select></div>
-        <div class="field"><label class="fld">Hästbyte efter</label><select id="scin_grot">${rotO}</select></div>
-        <button class="btn primary sm" data-sca="group">+ Skapa grupp</button>
-      </div>`);
+      if(scOpen.add_group){
+        const catO = `<option value="">Ingen kategori</option>` + scData.cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+        const wdO = [1,2,3,4,5,6,7].map(w=>`<option value="${w}">${RS_WD[w]}</option>`).join("");
+        const tO = TIME_OPTIONS.map(x=>`<option value="${x}"${x==="17:00"?" selected":""}>${x}</option>`).join("");
+        const dO = RS_DUR.map(d=>`<option value="${d}"${d===60?" selected":""}>${d} min</option>`).join("");
+        const capO = (()=>{let o="";for(let i=1;i<=20;i++)o+=`<option value="${i}"${i===8?" selected":""}>${i}</option>`;return o;})();
+        const rotO = (()=>{let o="";for(let i=1;i<=10;i++)o+=`<option value="${i}">${i} gång${i>1?"er":""}</option>`;return o;})();
+        t.push(`<div class="editrow lvl1">
+          <div class="field"><label class="fld">Ny grupp — namn</label><input type="text" id="scin_group" placeholder="t.ex. Nybörjare måndag"></div>
+          <div class="field"><label class="fld">Kategori</label><select id="scin_gcat">${catO}</select></div>
+          <div class="field"><label class="fld">Veckodag</label><select id="scin_gwd">${wdO}</select></div>
+          <div class="field"><label class="fld">Starttid</label><select id="scin_gtime">${tO}</select></div>
+          <div class="field"><label class="fld">Lektionslängd</label><select id="scin_gdur">${dO}</select></div>
+          <div class="field"><label class="fld">Antal platser</label><select id="scin_gcap">${capO}</select></div>
+          <div class="field"><label class="fld">Hästbyte efter</label><select id="scin_grot">${rotO}</select></div>
+          <div class="editbtns"><button class="btn primary sm" data-sca="group">+ Skapa grupp</button><button class="btn sm" data-scca="group">Avbryt</button></div>
+        </div>`);
+      } else {
+        t.push(`<div class="trow lvl1" data-scadd="group" style="color:var(--accent)">${ic("plus")} Lägg till grupp</div>`);
+      }
     }
-  }
-  // KATEGORIER
-  t.push(`<div class="trow lvl0" data-t="kats">${ic("tag")} Kategorier ${scCaret("kats")}</div>`);
-  if(scOpen.kats){
-    scData.cats.forEach(c=> t.push(`<div class="tleaf lvl1">${ic("tag")} ${esc(c.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="cat:${c.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
-    if(!scData.cats.length) t.push(`<div class="tleaf lvl1 tmuted">Inga kategorier än — t.ex. Nybörjare, Hopp, Dressyr</div>`);
-    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_cat" placeholder="Ny kategori"><button class="btn sm" data-sca="cat">+ Kategori</button></div>`);
+    // Kategorier för grupper ligger under Grupper
+    t.push(`<div class="trow lvl1" data-t="kats">${ic("tag")} Kategorier ${scCaret("kats")}</div>`);
+    if(scOpen.kats){
+      scData.cats.forEach(c=>{
+        if(curAdmin && scOpen["edit_c_"+c.id]){ t.push(scNameEditRow("cat", "c_"+c.id, c.id, c.name, c.description, 2)); return; }
+        t.push(`<div class="tleaf lvl2">${ic("tag")} ${esc(c.name)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="c_${c.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="cat:${c.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+        t.push(scDescLeaf(c.description, 3));
+      });
+      if(!scData.cats.length) t.push(`<div class="tleaf lvl2 tmuted">Inga kategorier än — t.ex. Nybörjare, Hopp, Dressyr</div>`);
+      if(curAdmin) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_cat" placeholder="Ny kategori"><button class="btn sm" data-sca="cat">+ Kategori</button></div>`);
+    }
   }
   // HÄSTAR
   t.push(`<div class="trow lvl0" data-t="hastar">${ic("home")} Hästar ${scCaret("hastar")}</div>`);
   if(scOpen.hastar){
-    scData.horses.forEach(h=> t.push(`<div class="tleaf lvl1">${esc(h.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="horse:${h.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+    scData.horses.forEach(h=>{
+      if(curAdmin && scOpen["edit_h_"+h.id]){ t.push(scNameEditRow("horse", "h_"+h.id, h.id, h.name, h.description, 1)); return; }
+      t.push(`<div class="tleaf lvl1">${esc(h.name)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="h_${h.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="horse:${h.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+      t.push(scDescLeaf(h.description, 2));
+    });
     if(!scData.horses.length) t.push(`<div class="tleaf lvl1 tmuted">Inga hästar än</div>`);
     if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_horse" placeholder="Hästens namn"><button class="btn sm" data-sca="horse">+ Häst</button></div>`);
   }
@@ -1934,11 +1967,13 @@ function renderSchoolTree(){
         t.push(`<div class="editrow lvl1">
           <div class="field"><label class="fld">Namn</label><input type="text" id="scf_name_${f.id}" value="${esc(f.name)}"></div>
           <div class="field"><label class="fld">Kategori</label><select id="scf_cat_${f.id}">${scO}</select></div>
+          ${scDescField("f_"+f.id, f.description)}
           <div class="editbtns"><button class="btn primary sm" data-scs="staff:${f.id}">Spara</button><button class="btn sm" data-scc="f_${f.id}">Avbryt</button></div>
         </div>`);
       } else {
         const btns = curAdmin ? `<span class="tbtns"><button class="x" data-sce="f_${f.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="staff:${f.id}" title="Ta bort">${ic("x")}</button></span>` : "";
         t.push(`<div class="trow lvl1" data-t="${key}">${ic("user")} ${esc(f.name)}${cat?` <span class="tagpill">${esc(cat)}</span>`:""} ${scCaret(key)}${btns}</div>`);
+        t.push(scDescLeaf(f.description, 2));
       }
       if(scOpen[key]){
         (f.rs_staff_member||[]).forEach(m=> t.push(`<div class="tleaf lvl2">${ic("mail")} ${esc(m.email)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="fmail:${f.id}|${encodeURIComponent(m.email)}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
@@ -1948,17 +1983,25 @@ function renderSchoolTree(){
     });
     if(!(scData.staff||[]).length) t.push(`<div class="tleaf lvl1 tmuted">Ingen personal än</div>`);
     if(curAdmin){
-      const scO = `<option value="">Ingen kategori</option>` + (scData.staffCats||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
-      t.push(`<div class="editrow lvl1">
-        <div class="field"><label class="fld">Ny personal — namn</label><input type="text" id="scin_staff" placeholder="Namn"></div>
-        <div class="field"><label class="fld">Mejladress</label><input type="email" id="scin_sfmail" placeholder="Valfritt — kan läggas till senare"></div>
-        <div class="field"><label class="fld">Kategori</label><select id="scin_sfcat">${scO}</select></div>
-        <button class="btn primary sm" data-sca="staff">+ Lägg till personal</button>
-      </div>`);
+      if(scOpen.add_staff){
+        const scO = `<option value="">Ingen kategori</option>` + (scData.staffCats||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+        t.push(`<div class="editrow lvl1">
+          <div class="field"><label class="fld">Ny personal — namn</label><input type="text" id="scin_staff" placeholder="Namn"></div>
+          <div class="field"><label class="fld">Mejladress</label><input type="email" id="scin_sfmail" placeholder="Valfritt — kan läggas till senare"></div>
+          <div class="field"><label class="fld">Kategori</label><select id="scin_sfcat">${scO}</select></div>
+          <div class="editbtns"><button class="btn primary sm" data-sca="staff">+ Lägg till personal</button><button class="btn sm" data-scca="staff">Avbryt</button></div>
+        </div>`);
+      } else {
+        t.push(`<div class="trow lvl1" data-scadd="staff" style="color:var(--accent)">${ic("plus")} Lägg till personal</div>`);
+      }
     }
-    t.push(`<div class="trow lvl1" data-t="stcats">${ic("tag")} Personalkategorier ${scCaret("stcats")}</div>`);
+    t.push(`<div class="trow lvl1" data-t="stcats">${ic("tag")} Kategorier ${scCaret("stcats")}</div>`);
     if(scOpen.stcats){
-      (scData.staffCats||[]).forEach(c=> t.push(`<div class="tleaf lvl2">${ic("tag")} ${esc(c.name)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="stcat:${c.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
+      (scData.staffCats||[]).forEach(c=>{
+        if(curAdmin && scOpen["edit_sc_"+c.id]){ t.push(scNameEditRow("stcat", "sc_"+c.id, c.id, c.name, c.description, 2)); return; }
+        t.push(`<div class="tleaf lvl2">${ic("tag")} ${esc(c.name)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="sc_${c.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="stcat:${c.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+        t.push(scDescLeaf(c.description, 3));
+      });
       if(!(scData.staffCats||[]).length) t.push(`<div class="tleaf lvl2 tmuted">Inga än — t.ex. Ridlärare, Stallpersonal</div>`);
       if(curAdmin) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_stcat" placeholder="Ny personalkategori"><button class="btn sm" data-sca="stcat">+ Kategori</button></div>`);
     }
@@ -1970,7 +2013,12 @@ function renderSchoolTree(){
       const key = "s_"+s.id;
       const mine = myStud.has(s.id);
       const may = curAdmin || mine;
-      t.push(`<div class="trow lvl1" data-t="${key}">${ic("user")} ${esc(s.name)}${mine?` <span class="tagpill">din</span>`:""} ${scCaret(key)}${curAdmin?`<span class="tbtns"><button class="x" data-scd="student:${s.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+      if(curAdmin && scOpen["edit_s_"+s.id]){
+        t.push(scNameEditRow("student", "s_"+s.id, s.id, s.name, s.description, 1));
+      } else {
+        t.push(`<div class="trow lvl1" data-t="${key}">${ic("user")} ${esc(s.name)}${mine?` <span class="tagpill">din</span>`:""} ${scCaret(key)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="s_${s.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="student:${s.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+        t.push(scDescLeaf(s.description, 2));
+      }
       if(scOpen[key]){
         (s.rs_student_member||[]).forEach(m=> t.push(`<div class="tleaf lvl2">${ic("mail")} ${esc(m.email)}${may?`<span class="tbtns"><button class="x" data-scd="smail:${s.id}|${encodeURIComponent(m.email)}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`));
         if(!(s.rs_student_member||[]).length) t.push(`<div class="tleaf lvl2 tmuted">Ingen mejl kopplad än</div>`);
@@ -1980,19 +2028,30 @@ function renderSchoolTree(){
       }
     });
     if(curAdmin){
-      const gO = `<option value="">Ingen grupp än</option>` + scData.groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("");
-      t.push(`<div class="editrow lvl1">
-        <div class="field"><label class="fld">Ny elev — namn</label><input type="text" id="scin_student" placeholder="Elevens namn"></div>
-        <div class="field"><label class="fld">Mejladress (förälder/elev)</label><input type="email" id="scin_stmail" placeholder="Valfritt — kan läggas till senare"></div>
-        <div class="field"><label class="fld">Grupp</label><select id="scin_stgrp">${gO}</select></div>
-        <button class="btn primary sm" data-sca="student">+ Skapa elev</button>
-      </div>`);
+      if(scOpen.add_student){
+        const gO = `<option value="">Ingen grupp än</option>` + scData.groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("");
+        t.push(`<div class="editrow lvl1">
+          <div class="field"><label class="fld">Ny elev — namn</label><input type="text" id="scin_student" placeholder="Elevens namn"></div>
+          <div class="field"><label class="fld">Mejladress (förälder/elev)</label><input type="email" id="scin_stmail" placeholder="Valfritt — kan läggas till senare"></div>
+          <div class="field"><label class="fld">Grupp</label><select id="scin_stgrp">${gO}</select></div>
+          <div class="editbtns"><button class="btn primary sm" data-sca="student">+ Skapa elev</button><button class="btn sm" data-scca="student">Avbryt</button></div>
+        </div>`);
+      } else {
+        t.push(`<div class="trow lvl1" data-scadd="student" style="color:var(--accent)">${ic("plus")} Lägg till elev</div>`);
+      }
     }
   }
   host.innerHTML = t.join("");
   host.querySelectorAll("[data-t]").forEach(n=> n.onclick = ()=>{ const k=n.getAttribute("data-t"); scOpen[k]=!scOpen[k]; renderSchoolTree(); });
   host.querySelectorAll("[data-sce]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen["edit_"+b.getAttribute("data-sce")] = true; renderSchoolTree(); });
-  host.querySelectorAll("[data-scc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); delete scOpen["edit_"+b.getAttribute("data-scc")]; renderSchoolTree(); });
+  host.querySelectorAll("[data-scc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const k=b.getAttribute("data-scc"); delete scOpen["edit_"+k]; delete scOpen["desc_"+k]; renderSchoolTree(); });
+  host.querySelectorAll("[data-scadd]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen["add_"+b.getAttribute("data-scadd")] = true; renderSchoolTree(); });
+  host.querySelectorAll("[data-scca]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); delete scOpen["add_"+b.getAttribute("data-scca")]; renderSchoolTree(); });
+  // "Lägg till beskrivning": byt ut knappen mot en textarea på plats, utan omritning (annars tappas det man skrivit i övriga fält)
+  host.querySelectorAll("[data-scdesc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const k=b.getAttribute("data-scdesc"); scOpen["desc_"+k]=true;
+    const w=document.createElement("div"); w.className="field";
+    w.innerHTML=`<label class="fld">Beskrivning</label><textarea id="scdesc_${k}" rows="2" placeholder="t.ex. rädd för stora hästar"></textarea>`;
+    b.closest(".field").replaceWith(w); w.querySelector("textarea").focus(); });
   host.querySelectorAll("[data-scs]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scSave(b.getAttribute("data-scs")); });
   host.querySelectorAll("[data-sca]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scAdd(b.getAttribute("data-sca")); });
   host.querySelectorAll("[data-scd]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scDelete(b.getAttribute("data-scd")); });
@@ -2003,9 +2062,23 @@ async function scSave(spec){
   const [kind, id] = spec.split(":");
   if(kind === "staff"){
     const upd = { name: (el("scf_name_"+id).value||"").trim() || "Personal", category_id: el("scf_cat_"+id).value || null };
+    const d = scDescVal("f_"+id); if(d !== undefined) upd.description = d;
     const r = await db.from("rs_staff").update(upd).eq("id", id);
     if(r.error){ alert("Kunde inte spara: " + r.error.message); return; }
-    delete scOpen["edit_f_"+id];
+    delete scOpen["edit_f_"+id]; delete scOpen["desc_f_"+id];
+    await reloadSchool();
+    return;
+  }
+  // Namn + beskrivning-redigeringar (kategori, häst, elev, personalkategori, ledare)
+  const simple = { cat:["c_","category"], horse:["h_","rs_horse"], student:["s_","rs_student"], stcat:["sc_","rs_staff_category"], leader:["l_","rs_leader"] };
+  if(simple[kind]){
+    const [pfx, tbl] = simple[kind];
+    const key = pfx + id;
+    const upd = { name: (el("scn_"+key).value||"").trim() || "Namnlös" };
+    const d = scDescVal(key); if(d !== undefined) upd.description = d;
+    const r = await db.from(tbl).update(upd).eq("id", id);
+    if(r.error){ alert("Kunde inte spara: " + r.error.message); return; }
+    delete scOpen["edit_"+key]; delete scOpen["desc_"+key];
     await reloadSchool();
     return;
   }
@@ -2019,9 +2092,10 @@ async function scSave(spec){
     capacity: parseInt(el("scg_cap_"+id).value, 10),
     horse_rotation: parseInt(el("scg_rot_"+id).value, 10)
   };
+  const d = scDescVal(id); if(d !== undefined) upd.description = d;
   const r = await db.from("rs_group").update(upd).eq("id", id);
   if(r.error){ alert("Kunde inte spara: " + r.error.message); return; }
-  delete scOpen["edit_"+id];
+  delete scOpen["edit_"+id]; delete scOpen["desc_"+id];
   await reloadSchool();
 }
 
@@ -2038,7 +2112,8 @@ async function scAdd(spec){
       duration_min: parseInt(el("scin_gdur").value, 10),
       capacity: parseInt(el("scin_gcap").value, 10),
       horse_rotation: parseInt(el("scin_grot").value, 10),
-      sort_order: scData.groups.length }); }
+      sort_order: scData.groups.length });
+    if(!r.error) delete scOpen.add_group; }
   if(kind==="cat"){ const name=(el("scin_cat").value||"").trim(); if(!name) return;
     r = await db.from("category").insert({ stable_id: scStableId, name, sort_order: scData.cats.length }); }
   if(kind==="horse"){ const name=(el("scin_horse").value||"").trim(); if(!name) return;
@@ -2057,6 +2132,7 @@ async function scAdd(spec){
       const gr = await db.from("rs_group_student").insert({ group_id: gid, student_id: ins.data.id });
       if(gr.error) alert("Eleven skapades, men kunde inte läggas i gruppen: " + gr.error.message);
     }
+    delete scOpen.add_student;
     await reloadSchool(); return; }
   if(kind==="leader"){ const name=(el("scin_leader_"+a).value||"").trim(); if(!name) return;
     r = await db.from("rs_leader").insert({ group_id: a, name }); }
@@ -2078,6 +2154,7 @@ async function scAdd(spec){
       const mr = await db.from("rs_staff_member").insert({ staff_id: ins.data.id, email });
       if(mr.error) alert("Personen skapades, men mejlen kunde inte läggas till: " + mr.error.message);
     }
+    delete scOpen.add_staff;
     await reloadSchool(); return; }
   if(kind==="stcat"){ const name=(el("scin_stcat").value||"").trim(); if(!name) return;
     r = await db.from("rs_staff_category").insert({ stable_id: scStableId, name, sort_order: (scData.staffCats||[]).length }); }
