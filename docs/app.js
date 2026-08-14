@@ -1863,6 +1863,11 @@ function scDescField(key, val){
   return `<div class="field"><button class="btn sm" type="button" data-scdesc="${key}">+ Lägg till beskrivning</button></div>`;
 }
 function scDescVal(key){ const n = el("scdesc_"+key); if(!n) return undefined; const v = n.value.trim(); return v || null; }
+/* Lägg till-kontroller (select/input) visas först när man klickat på lägg till-raden */
+function scAddCtl(showKey, label, controlHtml, lvl){
+  if(scOpen[showKey]) return `<div class="addhorse lvl${lvl}">${controlHtml}</div>`;
+  return `<div class="tleaf lvl${lvl}" data-scshow="${showKey}" style="color:var(--accent);cursor:pointer;font-weight:600">${ic("plus")} ${label}</div>`;
+}
 function scDescLeaf(val, lvl){ return (val||"").trim() ? `<div class="tleaf lvl${lvl} tmuted tdesc">${esc(val)}</div>` : ""; }
 /* Litet redigeringsformulär för saker som bara har namn + beskrivning */
 function scNameEditRow(kind, key, id, name, desc, lvl, withDesc){
@@ -1913,24 +1918,6 @@ function renderSchoolTree(){
         t.push(scDescLeaf(g.description, 2));
       }
       if(scOpen[key]){
-        const leaders = scData.leaders.filter(x=> x.group_id === g.id);
-        t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Ledare</div>`);
-        leaders.forEach(ld=>{
-          if(curAdmin && scOpen["edit_l_"+ld.id]){ t.push(scNameEditRow("leader", "l_"+ld.id, ld.id, ld.name, null, 2, false)); return; }
-          t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(ld.name)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="l_${ld.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="leader:${ld.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
-        });
-        if(!leaders.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen ledare än</div>`);
-        if(curAdmin) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_leader_${g.id}" placeholder="Ledarens namn"><button class="btn sm" data-sca="leader:${g.id}">+ Ledare</button></div>`);
-        const inGroup = scData.gstud.filter(x=> x.group_id === g.id).map(x=> x.student_id);
-        t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Elever (${inGroup.length}/${g.capacity})</div>`);
-        inGroup.forEach(sid=>{
-          const s = scData.students.find(x=> x.id === sid); if(!s) return;
-          t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(s.name)}${myStud.has(s.id)?` <span class="tagpill">din</span>`:""}${curAdmin?`<span class="tbtns"><button class="x" data-scd="gstud:${g.id}|${s.id}" title="Ta bort ur gruppen">${ic("x")}</button></span>`:""}</div>`);
-        });
-        if(curAdmin){
-          const free = scData.students.filter(s=> !inGroup.includes(s.id));
-          if(free.length) t.push(`<div class="addhorse lvl2"><select id="scin_gstud_${g.id}">${free.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select><button class="btn sm" data-sca="gstud:${g.id}">+ Elev</button></div>`);
-        }
         // Personal kopplad till lektionen
         const gstf = (scData.gstaff||[]).filter(x=> x.group_id === g.id).map(x=> (scData.staff||[]).find(f=> f.id === x.staff_id)).filter(Boolean);
         t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Personal</div>`);
@@ -1938,7 +1925,20 @@ function renderSchoolTree(){
         if(!gstf.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen personal kopplad än</div>`);
         if(curAdmin){
           const freeF = (scData.staff||[]).filter(f=> !gstf.some(x=> x.id === f.id));
-          if(freeF.length) t.push(`<div class="addhorse lvl2"><select id="scin_gstaff_${g.id}">${freeF.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select><button class="btn sm" data-sca="gstaff:${g.id}">+ Personal</button></div>`);
+          if(freeF.length) t.push(scAddCtl("addsel_gstaff_"+g.id, "Lägg till personal",
+            `<select id="scin_gstaff_${g.id}">${freeF.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select><button class="btn sm" data-sca="gstaff:${g.id}">Lägg till</button>`, 2));
+        }
+        // Elever
+        const inGroup = scData.gstud.filter(x=> x.group_id === g.id).map(x=> x.student_id);
+        t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Elever (${inGroup.length}/${g.capacity})</div>`);
+        inGroup.forEach(sid=>{
+          const s = scData.students.find(x=> x.id === sid); if(!s) return;
+          t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(s.name)}${myStud.has(s.id)?` <span class="tagpill">din</span>`:""}${curAdmin?`<span class="tbtns"><button class="x" data-scd="gstud:${g.id}|${s.id}" title="Ta bort från lektionen">${ic("x")}</button></span>`:""}</div>`);
+        });
+        if(curAdmin){
+          const free = scData.students.filter(s=> !inGroup.includes(s.id));
+          if(free.length) t.push(scAddCtl("addsel_gstud_"+g.id, "Lägg till elev",
+            `<select id="scin_gstud_${g.id}">${free.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select><button class="btn sm" data-sca="gstud:${g.id}">Lägg till</button>`, 2));
         }
         // Hästar kopplade till lektionen (styr hästvalet i schemat)
         const ghs = (scData.ghorse||[]).filter(x=> x.group_id === g.id).map(x=> scData.horses.find(h=> h.id === x.horse_id)).filter(Boolean);
@@ -1947,8 +1947,19 @@ function renderSchoolTree(){
         if(!ghs.length) t.push(`<div class="tleaf lvl2 tmuted">Inga kopplade — alla hästar kan väljas i schemat</div>`);
         if(curAdmin){
           const freeH = scData.horses.filter(h=> !ghs.some(x=> x.id === h.id));
-          if(freeH.length) t.push(`<div class="addhorse lvl2"><select id="scin_ghorse_${g.id}">${freeH.map(h=>`<option value="${h.id}">${esc(h.name)}</option>`).join("")}</select><button class="btn sm" data-sca="ghorse:${g.id}">+ Häst</button></div>`);
+          if(freeH.length) t.push(scAddCtl("addsel_ghorse_"+g.id, "Lägg till häst",
+            `<select id="scin_ghorse_${g.id}">${freeH.map(h=>`<option value="${h.id}">${esc(h.name)}</option>`).join("")}</select><button class="btn sm" data-sca="ghorse:${g.id}">Lägg till</button>`, 2));
         }
+        // Ledare (fritext)
+        const leaders = scData.leaders.filter(x=> x.group_id === g.id);
+        t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Ledare</div>`);
+        leaders.forEach(ld=>{
+          if(curAdmin && scOpen["edit_l_"+ld.id]){ t.push(scNameEditRow("leader", "l_"+ld.id, ld.id, ld.name, null, 2, false)); return; }
+          t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(ld.name)}${curAdmin?`<span class="tbtns"><button class="x" data-sce="l_${ld.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="leader:${ld.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+        });
+        if(!leaders.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen ledare än</div>`);
+        if(curAdmin) t.push(scAddCtl("addsel_leader_"+g.id, "Lägg till ledare",
+          `<input type="text" id="scin_leader_${g.id}" placeholder="Ledarens namn"><button class="btn sm" data-sca="leader:${g.id}">Lägg till</button>`, 2));
       }
     });
     if(curAdmin){
@@ -2003,7 +2014,8 @@ function renderSchoolTree(){
         if(!hg.length) t.push(`<div class="tleaf lvl2 tmuted">Inga lektioner än</div>`);
         if(curAdmin){
           const freeG = scData.groups.filter(g=> !hg.some(x=> x.group_id === g.id));
-          if(freeG.length) t.push(`<div class="addhorse lvl2"><select id="scin_hgrp_${h.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="hgrp:${h.id}">+ Lektion</button></div>`);
+          if(freeG.length) t.push(scAddCtl("addsel_hgrp_"+h.id, "Lägg till på lektion",
+            `<select id="scin_hgrp_${h.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="hgrp:${h.id}">Lägg till</button>`, 2));
         }
       }
     });
@@ -2042,7 +2054,8 @@ function renderSchoolTree(){
         if(!fg.length) t.push(`<div class="tleaf lvl2 tmuted">Inga lektioner än</div>`);
         if(curAdmin){
           const freeG = scData.groups.filter(g=> !fg.some(x=> x.group_id === g.id));
-          if(freeG.length) t.push(`<div class="addhorse lvl2"><select id="scin_fgrp_${f.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="fgrp:${f.id}">+ Lektion</button></div>`);
+          if(freeG.length) t.push(scAddCtl("addsel_fgrp_"+f.id, "Lägg till på lektion",
+            `<select id="scin_fgrp_${f.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="fgrp:${f.id}">Lägg till</button>`, 2));
         }
         const ft = (scData.taskStaff||[]).filter(x=> x.staff_id === f.id);
         t.push(`<div class="tleaf lvl2 tmuted" style="font-weight:700">Arbetspass</div>`);
@@ -2053,7 +2066,8 @@ function renderSchoolTree(){
         if(!ft.length) t.push(`<div class="tleaf lvl2 tmuted">Inga arbetspass än</div>`);
         if(curAdmin){
           const freeT = (scData.tasks||[]).filter(tk=> !ft.some(x=> x.task_id === tk.id));
-          if(freeT.length) t.push(`<div class="addhorse lvl2"><select id="scin_ftask_${f.id}">${freeT.map(tk=>`<option value="${tk.id}">${esc(tk.name)}</option>`).join("")}</select><button class="btn sm" data-sca="ftask:${f.id}">+ Arbetspass</button></div>`);
+          if(freeT.length) t.push(scAddCtl("addsel_ftask_"+f.id, "Lägg till på arbetspass",
+            `<select id="scin_ftask_${f.id}">${freeT.map(tk=>`<option value="${tk.id}">${esc(tk.name)}</option>`).join("")}</select><button class="btn sm" data-sca="ftask:${f.id}">Lägg till</button>`, 2));
         }
       }
     });
@@ -2112,7 +2126,8 @@ function renderSchoolTree(){
         if(!tf2.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen tilldelad än</div>`);
         if(curAdmin){
           const freeF = (scData.staff||[]).filter(f=> !tf2.some(x=> x.id === f.id));
-          if(freeF.length) t.push(`<div class="addhorse lvl2"><select id="scin_tstaff_${tk.id}">${freeF.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select><button class="btn sm" data-sca="tstaff:${tk.id}">+ Personal</button></div>`);
+          if(freeF.length) t.push(scAddCtl("addsel_tstaff_"+tk.id, "Lägg till personal",
+            `<select id="scin_tstaff_${tk.id}">${freeF.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select><button class="btn sm" data-sca="tstaff:${tk.id}">Lägg till</button>`, 2));
         }
       }
     });
@@ -2160,7 +2175,8 @@ function renderSchoolTree(){
         if(!myGr.length) t.push(`<div class="tleaf lvl2 tmuted">Inga lektioner än</div>`);
         if(curAdmin){
           const freeG = scData.groups.filter(g=> !myGr.some(x=> x.group_id === g.id));
-          if(freeG.length) t.push(`<div class="addhorse lvl2"><select id="scin_sgrp_${s.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="sgrp:${s.id}">+ Lektion</button></div>`);
+          if(freeG.length) t.push(scAddCtl("addsel_sgrp_"+s.id, "Lägg till på lektion",
+            `<select id="scin_sgrp_${s.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="sgrp:${s.id}">Lägg till</button>`, 2));
         }
       }
     });
@@ -2183,6 +2199,7 @@ function renderSchoolTree(){
   host.querySelectorAll("[data-sce]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen["edit_"+b.getAttribute("data-sce")] = true; renderSchoolTree(); });
   host.querySelectorAll("[data-scc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const k=b.getAttribute("data-scc"); delete scOpen["edit_"+k]; delete scOpen["desc_"+k]; renderSchoolTree(); });
   host.querySelectorAll("[data-scadd]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen["add_"+b.getAttribute("data-scadd")] = true; renderSchoolTree(); });
+  host.querySelectorAll("[data-scshow]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen[b.getAttribute("data-scshow")] = true; renderSchoolTree(); });
   host.querySelectorAll("[data-scca]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); delete scOpen["add_"+b.getAttribute("data-scca")]; renderSchoolTree(); });
   // "Lägg till beskrivning": byt ut knappen mot en textarea på plats, utan omritning (annars tappas det man skrivit i övriga fält)
   host.querySelectorAll("[data-scdesc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const k=b.getAttribute("data-scdesc"); scOpen["desc_"+k]=true;
@@ -2340,6 +2357,7 @@ async function scAdd(spec){
     r = await db.from("rs_staff_member").insert({ staff_id: a, email }); }
   if(!r) return;
   if(r.error){ alert("Kunde inte lägga till: " + r.error.message); return; }
+  delete scOpen["addsel_"+kind+"_"+(a||"")];   // fäll ihop lägg till-kontrollen igen
   await reloadSchool();
 }
 
