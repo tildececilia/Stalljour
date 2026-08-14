@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=Great+Vibes&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=27">
+<link rel="stylesheet" href="styles.css?v=28">
 <script>try{if(localStorage.getItem("stalljour.theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
 </head>
 <body>
@@ -18,9 +18,18 @@
     <button class="btn sm" id="btnSchedule" style="display:none"><span class="islot" data-icon="calendar"></span><span class="lbl"> Schema</span></button>
     <div class="menu" id="scheduleMenu"></div>
   </div>
-  <button class="btn sm" id="btnMine" style="display:none"><span class="islot" data-icon="list"></span><span class="lbl"> Mina pass</span></button>
-  <button class="btn sm" id="btnChat" style="display:none"><span class="islot" data-icon="message"></span><span class="lbl"> Chatt</span></button>
-  <button class="btn sm" id="btnSettings" style="display:none"><span class="islot" data-icon="settings"></span><span class="lbl"> Inställningar</span></button>
+  <div class="menuwrap">
+    <button class="btn sm" id="btnMine" style="display:none"><span class="islot" data-icon="list"></span><span class="lbl"> Mina pass</span></button>
+    <div class="menu" id="mineMenu"></div>
+  </div>
+  <div class="menuwrap">
+    <button class="btn sm" id="btnChat" style="display:none"><span class="islot" data-icon="message"></span><span class="lbl"> Chatt</span></button>
+    <div class="menu" id="chatMenu"></div>
+  </div>
+  <div class="menuwrap">
+    <button class="btn sm" id="btnSettings" style="display:none"><span class="islot" data-icon="settings"></span><span class="lbl"> Inställningar</span></button>
+    <div class="menu" id="settingsMenu"></div>
+  </div>
   <div class="menuwrap">
     <button class="btn sm" id="btnProfile" style="display:none"><span class="islot" data-icon="user"></span><span class="lbl"> Profil</span></button>
     <div class="menu" id="profileMenu"></div>
@@ -38,7 +47,7 @@
 <div class="wrap"><div id="app"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js?v=27"></script>
-<script src="app.js?v=27"></script>
+<script src="config.js?v=28"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>

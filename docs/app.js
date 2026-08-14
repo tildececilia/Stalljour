@@ -1115,7 +1115,7 @@ function updateHeader(){
   });
 }
 
-function closeMenus(){ ["profileMenu","scheduleMenu","bellMenu","burgerMenu"].forEach(id=>{ const m=el(id); if(m) m.classList.remove("open"); }); }
+function closeMenus(){ ["profileMenu","scheduleMenu","settingsMenu","chatMenu","mineMenu","bellMenu","burgerMenu"].forEach(id=>{ const m=el(id); if(m) m.classList.remove("open"); }); }
 function closeProfileMenu(){ closeMenus(); }
 
 let pmState = null;   // utfällnings-läge för profil-menyn
@@ -1225,7 +1225,7 @@ function openBurgerMenu(){
     e.stopPropagation();
     const k = b.getAttribute("data-bg");
     if(k === "theme"){ theme = theme==="dark"?"light":"dark"; try{ localStorage.setItem("stalljour.theme", theme); }catch(err){} applyTheme(theme); openBurgerMenu(); return; }
-    closeMenus(); gotoView(k);
+    closeMenus(); gotoView(k, "burgerMenu");
   });
   resetPmState(); pmTargetId = "burgerProfile"; buildProfileMenu();
   m.classList.add("open");
@@ -1237,8 +1237,6 @@ el("btnBurger").onclick = (e)=>{
   closeMenus();
   if(!wasOpen) openBurgerMenu();
 };
-el("btnChat").onclick = ()=> gotoView("chat");
-el("btnMine").onclick = ()=> gotoView("mine");
 document.querySelector("header.app .logo").onclick = ()=>{
   if(!session) return;
   didAutoRoute = true;   // stanna på Mina stall, hoppa inte vidare
@@ -1247,11 +1245,39 @@ document.querySelector("header.app .logo").onclick = ()=>{
 };
 document.addEventListener("click", (e)=>{ if(!e.target.closest(".menuwrap")) closeMenus(); });
 
-async function gotoView(name){
+// Stallväljare i dropdown: ett stall → gå direkt; flera → "Välj stall" och sedan vald vy
+async function openStablePick(menuId, name){
+  const m = el(menuId);
+  m.innerHTML = `<div class="menuhead sub">Laddar…</div>`;
+  m.classList.add("open");
+  try{
+    const stables = (await loadMyStables()).filter(u=> u.id);
+    if(stables.length <= 1){
+      closeMenus();
+      if(stables.length === 1){
+        if(name==="schedule") weekStart2 = startOfWeek(new Date());
+        view = { name, stableId: stables[0].id }; render();
+      } else { view = { name:"home", stableId:null }; render(); }
+      return;
+    }
+    m.innerHTML = `<div class="menuhead">Välj stall</div>` + stables.map(s=>
+      `<button class="menuitem" data-pick="${s.id}">${view.stableId===s.id?"✓ ":""}${esc(unitLabel(s))}</button>`).join("");
+    m.querySelectorAll("[data-pick]").forEach(b=> b.onclick = (e)=>{
+      e.stopPropagation();
+      closeMenus();
+      if(name==="schedule") weekStart2 = startOfWeek(new Date());
+      view = { name, stableId: b.getAttribute("data-pick") };
+      render();
+    });
+  }catch(e){ m.innerHTML = `<div class="menuhead sub">Kunde inte hämta stall</div>`; }
+}
+
+async function gotoView(name, menuId){
   closeProfileMenu();
   if(!session) return;
   if(name==="schedule") weekStart2 = startOfWeek(new Date());
   if(view.stableId){ view = { name, stableId: view.stableId }; render(); return; }
+  if(menuId){ openStablePick(menuId, name); return; }
   try{
     const stables = (await loadMyStables()).filter(u=> u.id);
     if(stables.length === 1){ view = { name, stableId: stables[0].id }; }
@@ -1259,36 +1285,25 @@ async function gotoView(name){
     render();
   }catch(e){ view = { name:"home", stableId:null }; render(); }
 }
-el("btnSettings").onclick = ()=> gotoView("stable");
-
-// Schema-knappen: ett stall → gå direkt; flera → dropdown för att välja stall
-async function openScheduleMenu(){
-  const m = el("scheduleMenu");
-  m.innerHTML = `<div class="menuhead sub">Laddar…</div>`;
-  m.classList.add("open");
-  try{
-    const stables = (await loadMyStables()).filter(u=> u.id);
-    if(stables.length <= 1){
-      closeMenus();
-      if(stables.length === 1){ weekStart2 = startOfWeek(new Date()); view = { name:"schedule", stableId: stables[0].id }; render(); }
-      return;
-    }
-    m.innerHTML = `<div class="menuhead">Välj stall</div>` + stables.map(s=>
-      `<button class="menuitem" data-sched="${s.id}">${view.stableId===s.id?"✓ ":""}${esc(unitLabel(s))}</button>`).join("");
-    m.querySelectorAll("[data-sched]").forEach(b=> b.onclick = ()=>{
-      closeMenus();
-      weekStart2 = startOfWeek(new Date());
-      view = { name:"schedule", stableId: b.getAttribute("data-sched") };
-      render();
-    });
-  }catch(e){ m.innerHTML = `<div class="menuhead sub">Kunde inte hämta stall</div>`; }
+function navBtn(btnId, menuId, name){
+  el(btnId).onclick = (e)=>{
+    e.stopPropagation();
+    const m = el(menuId);
+    const wasOpen = m.classList.contains("open");
+    closeMenus();
+    if(!wasOpen) gotoView(name, menuId);
+  };
 }
+navBtn("btnSettings", "settingsMenu", "stable");
+navBtn("btnChat", "chatMenu", "chat");
+navBtn("btnMine", "mineMenu", "mine");
+
 el("btnSchedule").onclick = (e)=>{
   e.stopPropagation();
   const m = el("scheduleMenu");
   const wasOpen = m.classList.contains("open");
   closeMenus();
-  if(!wasOpen) openScheduleMenu();
+  if(!wasOpen) openStablePick("scheduleMenu", "schedule");
 };
 
 /* ============ Notiser & byt pass ============ */
