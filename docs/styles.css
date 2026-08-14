@@ -82,6 +82,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 
 /* Trädvy – stallets inställningar */
 .trow{display:flex;align-items:center;gap:8px;padding:10px;border-radius:10px;cursor:pointer;font-weight:700;user-select:none}
+.trow.lvl0{font-size:1.04rem}
+.trow.titem{font-weight:500;font-size:.93rem}
+.taskcard{border-style:dashed}
 .trow:hover{background:var(--accent-soft)}
 .trow .caret{color:var(--muted);font-size:.8rem}
 .tleaf{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:.9rem;border-radius:8px}
