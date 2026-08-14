@@ -25,7 +25,8 @@ button{font-family:inherit;cursor:pointer}
 
 header.app{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
 header.app .logo{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:1.4rem;letter-spacing:.01em;line-height:1;display:flex;align-items:center;gap:9px;color:var(--accent);cursor:pointer}
-header.app .logo .logomark{width:30px;height:30px;flex-shrink:0}
+header.app .logo .logomark{width:30px;height:30px;flex-shrink:0;display:inline-block;background:currentColor;
+  -webkit-mask:url(logo-mask.png?v=35) center/contain no-repeat;mask:url(logo-mask.png?v=35) center/contain no-repeat}
 header.app .spacer{flex:1}
 
 .wrap{max-width:640px;margin:0 auto;padding:22px 18px 60px}
