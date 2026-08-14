@@ -1225,7 +1225,7 @@ function openBurgerMenu(){
     e.stopPropagation();
     const k = b.getAttribute("data-bg");
     if(k === "theme"){ theme = theme==="dark"?"light":"dark"; try{ localStorage.setItem("stalljour.theme", theme); }catch(err){} applyTheme(theme); openBurgerMenu(); return; }
-    closeMenus(); gotoView(k, "burgerMenu");
+    closeMenus(); openStablePick("burgerMenu", k);
   });
   resetPmState(); pmTargetId = "burgerProfile"; buildProfileMenu();
   m.classList.add("open");
@@ -1291,7 +1291,7 @@ function navBtn(btnId, menuId, name){
     const m = el(menuId);
     const wasOpen = m.classList.contains("open");
     closeMenus();
-    if(!wasOpen) gotoView(name, menuId);
+    if(!wasOpen) openStablePick(menuId, name);   // alltid väljare vid flera stall, precis som Schema
   };
 }
 navBtn("btnSettings", "settingsMenu", "stable");
