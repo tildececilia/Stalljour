@@ -199,15 +199,7 @@ async function renderHome(){
       <p class="sub" style="margin:0 0 14px">Inloggad som ${esc(session.email)}</p>
       <p class="sub">Dina stall</p>
       <div id="stableList" class="list"><div class="empty">Laddar…</div></div>
-    </div>
-    <div class="card">
-      <p class="sub" style="margin:0 0 12px">Starta ett nytt stall eller en ridskola — du blir admin.</p>
-      <div class="field"><input type="text" id="newStable" placeholder="Namn, t.ex. RHC"></div>
-      <div class="field"><select id="newStableKind"><option value="stall">Stall (jourpass)</option><option value="ridskola">Ridskola (lektioner)</option></select></div>
-      <button class="btn primary block" id="createStableBtn">Skapa</button>
-      <div id="homeMsg" style="margin-top:12px"></div>
     </div>`;
-  el("createStableBtn").onclick = createStable;
 
   try{
     const all = await loadMyStables();
@@ -221,7 +213,12 @@ async function renderHome(){
       return;
     }
     const list = el("stableList");
-    if(!all.length){ list.innerHTML = `<div class="empty">Du är inte med i något stall än. Skapa ett nedan, eller be en admin lägga in din mejl.</div>`; return; }
+    if(!all.length){
+      list.innerHTML = `<div class="empty" style="margin-bottom:12px">Du är inte med i något stall än — skapa ett, eller be en admin lägga in din mejl.</div>
+        <button class="btn primary block" id="firstStableBtn">${ic("plus")} Skapa ditt första stall</button>`;
+      el("firstStableBtn").onclick = createOrgDialog;
+      return;
+    }
     // gruppera per stall (org)
     const orgs = new Map();
     all.forEach(u=>{
@@ -303,21 +300,27 @@ async function loadMyStables(){
 function unitLabel(u){ return u.orgName && u.orgName !== u.name ? `${u.orgName} · ${u.name}` : u.name; }
 function kindLabel(k){ return k === "ridskola" ? "Ridskola" : "Jourschema"; }
 
-async function createStable(){
-  const name = el("newStable").value.trim();
-  const mEl = el("homeMsg");
-  if(!name){ mEl.innerHTML = msg("Ge stallet ett namn.", "err"); return; }
-  const btn = el("createStableBtn"); btn.classList.add("spin"); btn.textContent="…";
-  try{
-    const kindEl = el("newStableKind");
-    const { data, error } = await db.rpc("create_stable", { p_name: name, p_kind: kindEl ? kindEl.value : "stall" });
-    if(error) throw error;
+function createOrgDialog(){
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  ov.innerHTML = `<div class="modal"><h3>Skapa nytt stall</h3>
+    <div class="field"><label class="fld">Stallets namn</label><input type="text" id="co_name" placeholder="t.ex. RHC" maxlength="40"></div>
+    <div class="field"><label class="fld">Första delen</label><select id="co_kind"><option value="stall">Jourschema</option><option value="ridskola">Ridskola</option></select></div>
+    <div id="co_msg"></div>
+    <div class="modal-btns"><button class="btn" id="co_cancel">Avbryt</button><button class="btn primary" id="co_go">Skapa</button></div></div>`;
+  document.body.appendChild(ov);
+  const done = ()=> ov.remove();
+  ov.querySelector("#co_cancel").onclick = done;
+  ov.onclick = (e)=>{ if(e.target===ov) done(); };
+  ov.querySelector("#co_go").onclick = async ()=>{
+    const name = (ov.querySelector("#co_name").value||"").trim();
+    if(!name){ ov.querySelector("#co_msg").innerHTML = msg("Ge stallet ett namn.", "err"); return; }
+    const { data, error } = await db.rpc("create_stable", { p_name: name, p_kind: ov.querySelector("#co_kind").value });
+    if(error){ ov.querySelector("#co_msg").innerHTML = msg("Kunde inte skapa: " + error.message, "err"); return; }
+    done();
     view = { name:"stable", stableId: data };
     render();
-  }catch(e){
-    mEl.innerHTML = msg("Kunde inte skapa stall: " + (e.message||e), "err");
-    btn.classList.remove("spin"); btn.textContent="Skapa nytt stall";
-  }
+  };
+  ov.querySelector("#co_name").focus();
 }
 
 /* ============ Stall-vy – profiler ============ */
@@ -1192,7 +1195,7 @@ function buildProfileMenu(){
 async function profileAction(act){
   closeProfileMenu();
   if(act==="requests"){ gotoView("requests"); return; }
-  if(act==="newstable"){ didAutoRoute = true; view = { name:"home", stableId:null }; render(); return; }
+  if(act==="newstable"){ createOrgDialog(); return; }
   if(act==="logout"){ await db.auth.signOut(); view = { name:"home", stableId:null }; return; }
 }
 el("btnProfile").onclick = (e)=>{
@@ -1231,6 +1234,12 @@ el("btnBurger").onclick = (e)=>{
 };
 el("btnChat").onclick = ()=> gotoView("chat");
 el("btnMine").onclick = ()=> gotoView("mine");
+document.querySelector("header.app .logo").onclick = ()=>{
+  if(!session) return;
+  didAutoRoute = true;   // stanna på Mina stall, hoppa inte vidare
+  view = { name:"home", stableId:null };
+  render();
+};
 document.addEventListener("click", (e)=>{ if(!e.target.closest(".menuwrap")) closeMenus(); });
 
 async function gotoView(name){
@@ -1780,10 +1789,14 @@ function rsEndTime(start, dur){
 async function renderSchool(stableId){
   scStableId = stableId; scOpen = {};
   appEl.innerHTML = `
-    <button class="backlink" id="scBack">‹ Mina stall</button>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <button class="backlink" id="scBack">‹ Mina stall</button>
+      <button class="backlink" id="scSched" style="color:var(--accent)">Öppna schemat ›</button>
+    </div>
     <div class="card schedtop"><div id="scHead"><h1 class="title">Laddar…</h1></div></div>
     <div class="card" id="scTreeCard"><div class="empty">Laddar…</div></div>`;
   el("scBack").onclick = ()=>{ view={name:"home",stableId:null}; render(); };
+  el("scSched").onclick = ()=>{ weekStart2 = startOfWeek(new Date()); view={name:"schedule",stableId}; render(); };
   try{
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
     curOrgId = st.data.org_id || null;
@@ -1869,7 +1882,24 @@ function renderSchoolTree(){
         }
       }
     });
-    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_group" placeholder="Ny grupp, t.ex. Nybörjare måndag"><button class="btn sm" data-sca="group">+ Grupp</button></div>`);
+    if(curAdmin){
+      const catO = `<option value="">Ingen kategori</option>` + scData.cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+      const wdO = [1,2,3,4,5,6,7].map(w=>`<option value="${w}">${RS_WD[w]}</option>`).join("");
+      const tO = TIME_OPTIONS.map(x=>`<option value="${x}"${x==="17:00"?" selected":""}>${x}</option>`).join("");
+      const dO = RS_DUR.map(d=>`<option value="${d}"${d===60?" selected":""}>${d} min</option>`).join("");
+      const capO = (()=>{let o="";for(let i=1;i<=20;i++)o+=`<option value="${i}"${i===8?" selected":""}>${i}</option>`;return o;})();
+      const rotO = (()=>{let o="";for(let i=1;i<=10;i++)o+=`<option value="${i}">${i} gång${i>1?"er":""}</option>`;return o;})();
+      t.push(`<div class="editrow lvl1">
+        <div class="field"><label class="fld">Ny grupp — namn</label><input type="text" id="scin_group" placeholder="t.ex. Nybörjare måndag"></div>
+        <div class="field"><label class="fld">Kategori</label><select id="scin_gcat">${catO}</select></div>
+        <div class="field"><label class="fld">Veckodag</label><select id="scin_gwd">${wdO}</select></div>
+        <div class="field"><label class="fld">Starttid</label><select id="scin_gtime">${tO}</select></div>
+        <div class="field"><label class="fld">Lektionslängd</label><select id="scin_gdur">${dO}</select></div>
+        <div class="field"><label class="fld">Antal platser</label><select id="scin_gcap">${capO}</select></div>
+        <div class="field"><label class="fld">Hästbyte efter</label><select id="scin_grot">${rotO}</select></div>
+        <button class="btn primary sm" data-sca="group">+ Skapa grupp</button>
+      </div>`);
+    }
   }
   // KATEGORIER
   t.push(`<div class="trow lvl0" data-t="kats">${ic("tag")} Kategorier ${scCaret("kats")}</div>`);
@@ -1901,7 +1931,15 @@ function renderSchoolTree(){
         t.push(`<div class="tleaf lvl2 tmuted">Grupper: ${gr.length? gr.map(esc).join(", ") : "inga än"}</div>`);
       }
     });
-    if(curAdmin) t.push(`<div class="addhorse lvl1"><input type="text" id="scin_student" placeholder="Elevens namn"><button class="btn sm" data-sca="student">+ Elev</button></div>`);
+    if(curAdmin){
+      const gO = `<option value="">Ingen grupp än</option>` + scData.groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("");
+      t.push(`<div class="editrow lvl1">
+        <div class="field"><label class="fld">Ny elev — namn</label><input type="text" id="scin_student" placeholder="Elevens namn"></div>
+        <div class="field"><label class="fld">Mejladress (förälder/elev)</label><input type="email" id="scin_stmail" placeholder="Valfritt — kan läggas till senare"></div>
+        <div class="field"><label class="fld">Grupp</label><select id="scin_stgrp">${gO}</select></div>
+        <button class="btn primary sm" data-sca="student">+ Skapa elev</button>
+      </div>`);
+    }
   }
   host.innerHTML = t.join("");
   host.querySelectorAll("[data-t]").forEach(n=> n.onclick = ()=>{ const k=n.getAttribute("data-t"); scOpen[k]=!scOpen[k]; renderSchoolTree(); });
@@ -1934,14 +1972,36 @@ async function scSave(spec){
 async function scAdd(spec){
   const parts = spec.split(":"); const kind = parts[0], a = parts[1];
   let r = null;
-  if(kind==="group"){ const name=(el("scin_group").value||"").trim(); if(!name) return;
-    r = await db.from("rs_group").insert({ stable_id: scStableId, name, sort_order: scData.groups.length }); }
+  if(kind==="group"){ const name=(el("scin_group").value||"").trim();
+    if(!name){ await infoDialog("Ge gruppen ett namn.", "Namn saknas"); return; }
+    r = await db.from("rs_group").insert({
+      stable_id: scStableId, name,
+      category_id: el("scin_gcat").value || null,
+      weekday: parseInt(el("scin_gwd").value, 10),
+      start_time: el("scin_gtime").value,
+      duration_min: parseInt(el("scin_gdur").value, 10),
+      capacity: parseInt(el("scin_gcap").value, 10),
+      horse_rotation: parseInt(el("scin_grot").value, 10),
+      sort_order: scData.groups.length }); }
   if(kind==="cat"){ const name=(el("scin_cat").value||"").trim(); if(!name) return;
     r = await db.from("category").insert({ stable_id: scStableId, name, sort_order: scData.cats.length }); }
   if(kind==="horse"){ const name=(el("scin_horse").value||"").trim(); if(!name) return;
     r = await db.from("rs_horse").insert({ stable_id: scStableId, name }); }
-  if(kind==="student"){ const name=(el("scin_student").value||"").trim(); if(!name) return;
-    r = await db.from("rs_student").insert({ stable_id: scStableId, name }); }
+  if(kind==="student"){ const name=(el("scin_student").value||"").trim();
+    if(!name){ await infoDialog("Ge eleven ett namn.", "Namn saknas"); return; }
+    const email = normEmail(el("scin_stmail").value);
+    const gid = el("scin_stgrp").value || null;
+    const ins = await db.from("rs_student").insert({ stable_id: scStableId, name }).select("id").single();
+    if(ins.error){ alert("Kunde inte skapa elev: " + ins.error.message); return; }
+    if(email.includes("@")){
+      const mr = await db.from("rs_student_member").insert({ student_id: ins.data.id, email });
+      if(mr.error) alert("Eleven skapades, men mejlen kunde inte läggas till: " + mr.error.message);
+    }
+    if(gid){
+      const gr = await db.from("rs_group_student").insert({ group_id: gid, student_id: ins.data.id });
+      if(gr.error) alert("Eleven skapades, men kunde inte läggas i gruppen: " + gr.error.message);
+    }
+    await reloadSchool(); return; }
   if(kind==="leader"){ const name=(el("scin_leader_"+a).value||"").trim(); if(!name) return;
     r = await db.from("rs_leader").insert({ group_id: a, name }); }
   if(kind==="gstud"){ const sid = el("scin_gstud_"+a).value; if(!sid) return;
