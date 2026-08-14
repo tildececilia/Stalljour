@@ -1,15 +1,15 @@
 :root{
-  --bg:#e5efe7; --card:#ffffff; --card-2:#eef4ef; --input:#ffffff;
-  --ink:#16211b; --muted:#5c6f64; --line:#d2e0d5;
-  --accent:#2f7d54; --accent-ink:#ffffff; --accent-soft:rgba(47,125,84,.1);
-  --danger:#c0453b; --shadow:0 1px 3px rgba(20,40,30,.06),0 8px 24px rgba(20,40,30,.08);
+  --bg:#dde8e0; --card:#ffffff; --card-2:#edf3ee; --input:#ffffff;
+  --ink:#0f2b24; --muted:#54685e; --line:#c6d6cb;
+  --accent:#14453a; --accent-ink:#e8f2ea; --accent-soft:rgba(20,69,58,.10);
+  --danger:#c0453b; --shadow:0 1px 3px rgba(15,43,36,.06),0 8px 24px rgba(15,43,36,.08);
   --font-body:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --font-head:"Space Grotesk","Inter",system-ui,sans-serif;
 }
 :root[data-theme="dark"]{
-  --bg:#0a0e0c; --card:#141b17; --card-2:#1b241e; --input:#0f1512;
-  --ink:#e7efe9; --muted:#8ba396; --line:#26332c;
-  --accent:#4ea373; --accent-ink:#07130c; --accent-soft:rgba(78,163,115,.14);
+  --bg:#0a1411; --card:#122019; --card-2:#182b22; --input:#0e1a15;
+  --ink:#dfeae2; --muted:#8fa89b; --line:#24382e;
+  --accent:#7fd4a8; --accent-ink:#0a1f16; --accent-soft:rgba(127,212,168,.14);
   --danger:#e07168; --shadow:0 1px 3px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
@@ -24,7 +24,8 @@ button{font-family:inherit;cursor:pointer}
 .tbtns .x .icn{width:17px;height:17px}
 
 header.app{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
-header.app .logo{font-family:"Great Vibes",cursive;font-weight:400;font-size:1.9rem;line-height:1;display:flex;align-items:center;gap:8px;color:var(--accent);cursor:pointer}
+header.app .logo{font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:1.4rem;letter-spacing:.01em;line-height:1;display:flex;align-items:center;gap:9px;color:var(--accent);cursor:pointer}
+header.app .logo .logomark{width:30px;height:30px;flex-shrink:0}
 header.app .spacer{flex:1}
 
 .wrap{max-width:640px;margin:0 auto;padding:22px 18px 60px}
@@ -272,7 +273,8 @@ select.schorse{width:auto;min-width:130px;padding:7px 10px;font-size:.9rem}
 /* Mobil: hamburgermeny — bara logga, klocka och ☰ i headern */
 @media (max-width:640px){
   header.app{gap:6px;padding:10px 12px}
-  header.app .logo{font-size:1.55rem}
+  header.app .logo{font-size:1.2rem}
+  header.app .logo .logomark{width:26px;height:26px}
   header.app .btn{padding:8px 10px}
   header.app .btn .lbl{display:none}
   header.app .btn .icn{width:19px;height:19px}
