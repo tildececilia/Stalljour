@@ -85,14 +85,18 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 /* Trädvy – stallets inställningar */
 .trow{display:flex;align-items:center;gap:8px;padding:10px;border-radius:10px;cursor:pointer;font-weight:700;user-select:none}
 .trow.lvl0{font-size:1.04rem}
+.tsect{border-radius:12px;padding:6px;margin-bottom:8px;border:1px solid transparent}
 .trow.titem{font-weight:500;font-size:.93rem}
 .taskcard{border-style:dashed}
-/* Ridskolans veckorutnät: dagar i x-led, tid i y-led */
-.scgw{overflow-x:auto}
-.scg{display:flex;gap:6px;min-width:460px}
-.scg .gut{width:42px;flex:0 0 auto}
-.scg .day{flex:1;min-width:84px}
-.scg .dhead{text-align:center;font-weight:700;font-size:.8rem;padding:4px 0 6px;white-space:nowrap}
+/* Ridskolans veckorutnät: dagar i x-led, tid i y-led. Hela veckan syns utan sidoskroll. */
+.scgw{overflow:visible}
+.scg{display:flex;gap:5px}
+.scg .gut{width:40px;flex:0 0 auto}
+.scg .day{flex:1;min-width:0}
+.scg .dhead{text-align:center;font-weight:700;font-size:.8rem;padding:4px 0 6px;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:4px}
+.scg .dayprint{border:none;background:transparent;color:var(--muted);padding:2px;border-radius:6px;cursor:pointer;line-height:0}
+.scg .dayprint:hover{color:var(--accent);background:var(--accent-soft)}
+.scg .dayprint .icn{width:14px;height:14px}
 .scg .dhead.today{color:var(--accent)}
 .scg .gbody{position:relative}
 .scg .dbody{position:relative;background:var(--card-2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
@@ -102,6 +106,29 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .scblk b{display:block;font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scblk.task{border-style:dashed}
 .scblk.sel{outline:2px solid var(--accent);z-index:2}
+@media (max-width:640px){
+  .scg{gap:3px}
+  .scg .gut{width:26px}
+  .scg .hlbl{font-size:.55rem;right:2px}
+  .scg .dhead{font-size:.62rem;gap:2px}
+  .scg .dayprint .icn{width:12px;height:12px}
+  .scblk{font-size:.56rem;padding:1px 3px;border-radius:6px}
+  .scblk b{font-size:.58rem}
+}
+/* Utskrift av dagsschema: bara utskriftsarket syns */
+.printsheet{display:none}
+@media print{
+  header.app{display:none !important}
+  .wrap{display:none !important}
+  .printsheet{display:block;color:#000;font-family:Georgia,serif}
+  .printsheet h1{font-size:19px;margin:0 0 12px}
+  .printsheet h2{font-size:14px;margin:16px 0 4px}
+  .printsheet .pnote{font-style:italic;margin:2px 0 6px;font-size:12px}
+  .printsheet .pmeta{margin:2px 0 6px;font-size:12px}
+  .printsheet table{border-collapse:collapse;width:100%;margin:4px 0 6px}
+  .printsheet th,.printsheet td{border:1px solid #888;padding:4px 8px;text-align:left;font-size:12px}
+  .printsheet .psec{break-inside:avoid}
+}
 .trow:hover{background:var(--accent-soft)}
 .trow .caret{color:var(--muted);font-size:.8rem}
 .tleaf{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:.9rem;border-radius:8px}
