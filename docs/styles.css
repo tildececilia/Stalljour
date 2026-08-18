@@ -115,18 +115,24 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
   .scblk{font-size:.56rem;padding:1px 3px;border-radius:6px}
   .scblk b{font-size:.58rem}
 }
-/* Utskrift av dagsschema: bara utskriftsarket syns */
+/* Utskrift av dagsschema: bara utskriftsarket syns, i EquiWorks-stil */
 .printsheet{display:none}
 @media print{
   header.app{display:none !important}
   .wrap{display:none !important}
-  .printsheet{display:block;color:#000;font-family:Georgia,serif}
-  .printsheet h1{font-size:19px;margin:0 0 12px}
-  .printsheet h2{font-size:14px;margin:16px 0 4px}
-  .printsheet .pnote{font-style:italic;margin:2px 0 6px;font-size:12px}
-  .printsheet .pmeta{margin:2px 0 6px;font-size:12px}
-  .printsheet table{border-collapse:collapse;width:100%;margin:4px 0 6px}
-  .printsheet th,.printsheet td{border:1px solid #888;padding:4px 8px;text-align:left;font-size:12px}
+  body{background:#fff !important}
+  .printsheet{display:block;color:#12352c;font-family:"Outfit",system-ui,sans-serif}
+  .printsheet .phead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:2.5px solid #14453a;padding-bottom:10px;margin-bottom:16px}
+  .printsheet .ptitle{font-size:21px;font-weight:700;color:#14453a}
+  .printsheet .pdate{font-size:13px;color:#57695e;margin-top:2px}
+  .printsheet .pbrand{display:flex;align-items:center;gap:8px;font-family:"Playfair Display",Georgia,serif;font-weight:600;font-size:19px;color:#14453a;white-space:nowrap}
+  .printsheet .pbrand img{width:36px;height:36px}
+  .printsheet h2{font-size:15px;margin:18px 0 4px;color:#14453a;border-bottom:1px solid #c3d2c6;padding-bottom:3px}
+  .printsheet .pnote{font-style:italic;margin:2px 0 6px;font-size:12px;color:#12352c}
+  .printsheet .pmeta{margin:2px 0 6px;font-size:12px;color:#57695e}
+  .printsheet table{border-collapse:collapse;width:100%;margin:6px 0 8px}
+  .printsheet th{border:1px solid #c3d2c6;border-bottom:2px solid #14453a;padding:5px 9px;text-align:left;font-size:11.5px;color:#14453a;text-transform:uppercase;letter-spacing:.06em}
+  .printsheet td{border:1px solid #c3d2c6;padding:5px 9px;text-align:left;font-size:12.5px}
   .printsheet .psec{break-inside:avoid}
 }
 .trow:hover{background:var(--accent-soft)}

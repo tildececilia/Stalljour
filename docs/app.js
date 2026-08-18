@@ -2747,7 +2747,10 @@ async function drawSchoolWeek(){
 function printSchoolDay(dISO, wd){
   const d = new Date(dISO+"T00:00:00");
   const lessons = scData.groups.filter(g=> g.weekday === wd).slice().sort((a,b)=> timeKey(a)-timeKey(b));
-  let html = `<h1>${esc(scData.stable.name)} — ${RS_WD[wd]} ${d.getDate()}/${d.getMonth()+1} ${d.getFullYear()}</h1>`;
+  let html = `<div class="phead">
+    <div><div class="ptitle">${esc(scData.stable.name)}</div><div class="pdate">${RS_WD[wd]} ${d.getDate()}/${d.getMonth()+1} ${d.getFullYear()} · Dagens schema</div></div>
+    <div class="pbrand"><img src="logo-print.png" alt=""><span>EquiWorks</span></div>
+  </div>`;
   lessons.forEach(g=>{
     const staffN = (scData.gstaff||[]).filter(x=> x.group_id===g.id).map(x=> ((scData.staff||[]).find(f=> f.id===x.staff_id)||{}).name).filter(Boolean);
     const instrN = g.has_leaders ? (scData.ginstr||[]).filter(x=> x.group_id===g.id).map(x=> ((scData.instructors||[]).find(i=> i.id===x.instructor_id)||{}).name).filter(Boolean) : [];
