@@ -2177,7 +2177,7 @@ async function renderSchool(stableId){
 
 async function reloadSchool(){
   const sid = scStableId;
-  const [g,c,s,h,l,gs,sf,sfc,gh,gf,tk,tf,hc,ec,ins,gi,sn] = await Promise.all([
+  const [g,c,s,h,l,gs,sf,sfc,gh,gf,tk,tf,hc,ec,ins,gi,sn,pl] = await Promise.all([
     db.from("rs_group").select("*, category(name)").eq("stable_id", sid).order("weekday").order("start_time"),
     db.from("category").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("rs_student").select("id,name,description,category_id,rs_student_member(email)").eq("stable_id", sid).order("name"),
@@ -2194,7 +2194,8 @@ async function reloadSchool(){
     db.from("rs_student_category").select("*").eq("stable_id", sid).order("sort_order"),
     db.from("rs_instructor").select("id,name,description,rs_instructor_member(email)").eq("stable_id", sid).order("name"),
     db.from("rs_group_instructor").select("*"),
-    db.from("rs_student_note").select("*")
+    db.from("rs_student_note").select("*"),
+    db.from("rs_place").select("*").eq("stable_id", sid).order("sort_order")
   ]);
   const err = g.error || c.error || s.error || h.error;
   if(err){ el("scTreeCard").innerHTML = msg("Kunde inte hämta data: " + err.message + " (har du kört db/ridskola.sql?)", "err"); return; }
@@ -2205,7 +2206,7 @@ async function reloadSchool(){
              tasks: tk.error?[]:tk.data, taskStaff: tf.error?[]:tf.data,
              horseCats: hc.error?[]:hc.data, studentCats: ec.error?[]:ec.data,
              instructors: ins.error?[]:ins.data, ginstr: gi.error?[]:gi.data,
-             studentNotes: sn.error?[]:sn.data };
+             studentNotes: sn.error?[]:sn.data, places: pl.error?[]:pl.data };
   renderSchoolTree();
 }
 
@@ -2253,7 +2254,18 @@ function scNameEditRow(kind, key, id, name, desc, lvl, withDesc){
 function scGroupMeta(g){
   const cat = g.category && g.category.name;
   const n = scData.gstud.filter(x=> x.group_id === g.id).length;
-  return `${RS_WD[g.weekday]||"?"} ${g.start_time}–${rsEndTime(g.start_time, g.duration_min)} · ${n}/${g.capacity} elever · häst byts efter ${g.horse_rotation} ggr${cat?` · ${cat}`:""}`;
+  const pl = g.place_id ? (((scData.places||[]).find(p=> p.id === g.place_id)||{}).name) : null;
+  return `${RS_WD[g.weekday]||"?"} ${g.start_time}–${rsEndTime(g.start_time, g.duration_min)} · ${n}/${g.capacity} elever · häst byts efter ${g.horse_rotation} ggr${cat?` · ${cat}`:""}${pl?` · ${pl}`:""}`;
+}
+/* Krockregel: lektioner som överlappar i tid samma dag varnas — om de har samma plats eller om plats saknas */
+function lessonConflicts(g){
+  const s1 = timeKey(g), e1 = s1 + (g.duration_min||60);
+  return (scData.groups||[]).filter(o=> o.id !== g.id && o.weekday === g.weekday).filter(o=>{
+    const s2 = timeKey(o), e2 = s2 + (o.duration_min||60);
+    if(!(s1 < e2 && s2 < e1)) return false;
+    if(g.place_id && o.place_id && g.place_id !== o.place_id) return false;
+    return true;
+  });
 }
 
 function renderSchoolTree(){
@@ -2287,6 +2299,7 @@ function renderSchoolTree(){
           <div class="field"><label class="fld">Längd</label><select id="scg_dur_${g.id}">${dO}</select></div>
           <div class="field"><label class="fld">Antal platser</label><select id="scg_cap_${g.id}">${capO}</select></div>
           <div class="field"><label class="fld">Hästbyte efter</label><select id="scg_rot_${g.id}">${rotO}</select></div>
+          <div class="field"><label class="fld">Plats</label><select id="scg_place_${g.id}"><option value="">Ingen plats</option>${(scData.places||[]).map(p=>`<option value="${p.id}"${p.id===g.place_id?" selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
           <div class="field"><label class="fld">Ledare</label><select id="scg_led_${g.id}"><option value="nej"${!g.has_leaders?" selected":""}>Nej</option><option value="ja"${g.has_leaders?" selected":""}>Ja</option></select></div>
           ${scDescField(g.id, g.description)}
           <div class="editbtns"><button class="btn primary sm" data-scs="group:${g.id}">Spara</button><button class="btn sm" data-scc="${g.id}">Avbryt</button></div>
@@ -2362,6 +2375,7 @@ function renderSchoolTree(){
           <div class="field"><label class="fld">Lektionslängd</label><select id="scin_gdur">${dO}</select></div>
           <div class="field"><label class="fld">Antal platser</label><select id="scin_gcap">${capO}</select></div>
           <div class="field"><label class="fld">Hästbyte efter</label><select id="scin_grot">${rotO}</select></div>
+          <div class="field"><label class="fld">Plats</label><select id="scin_gplace"><option value="">Ingen plats</option>${(scData.places||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
           <div class="editbtns"><button class="btn primary sm" data-sca="group">+ Skapa lektion</button><button class="btn sm" data-scca="group">Avbryt</button></div>
         </div>`);
       } else {
@@ -2378,6 +2392,17 @@ function renderSchoolTree(){
       });
       if(!scData.cats.length) t.push(`<div class="tleaf lvl2 tmuted">Inga kategorier än — t.ex. Nybörjare, Hopp, Dressyr</div>`);
       if(can) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_cat" placeholder="Ny kategori"><button class="btn sm" data-sca="cat">+ Kategori</button></div>`);
+    }
+    // Platser för lektioner ligger också under Lektioner
+    t.push(`<div class="trow lvl1" data-t="platser">${ic("home")} Platser ${scCaret("platser")}</div>`);
+    if(scOpen.platser){
+      (scData.places||[]).forEach(p=>{
+        if(can && scOpen["edit_pl_"+p.id]){ t.push(scNameEditRow("place", "pl_"+p.id, p.id, p.name, p.description, 2)); return; }
+        t.push(`<div class="tleaf lvl2">${ic("home")} ${esc(p.name)}${can?`<span class="tbtns"><button class="x" data-sce="pl_${p.id}" title="Ändra">${ic("pencil")}</button><button class="x" data-scd="place:${p.id}" title="Ta bort">${ic("x")}</button></span>`:""}</div>`);
+        t.push(scDescLeaf(p.description, 3));
+      });
+      if(!(scData.places||[]).length) t.push(`<div class="tleaf lvl2 tmuted">Inga platser än — t.ex. Stora ridhuset, Utebanan</div>`);
+      if(can) t.push(`<div class="addhorse lvl2"><input type="text" id="scin_place" placeholder="Ny plats"><button class="btn sm" data-sca="place">+ Plats</button></div>`);
     }
   }
   can = canL;
@@ -2725,7 +2750,7 @@ async function scSave(spec){
   }
   // Namn + beskrivning-redigeringar (kategori, häst, elev, personalkategori, ledare)
   const simple = { cat:["c_","category"], horse:["h_","rs_horse"], student:["s_","rs_student"], stcat:["sc_","rs_staff_category"], leader:["l_","rs_leader"],
-                   hcat:["hc_","rs_horse_category"], ecat:["ec_","rs_student_category"], instr:["i_","rs_instructor"] };
+                   hcat:["hc_","rs_horse_category"], ecat:["ec_","rs_student_category"], instr:["i_","rs_instructor"], place:["pl_","rs_place"] };
   if(simple[kind]){
     const [pfx, tbl] = simple[kind];
     const key = pfx + id;
@@ -2755,8 +2780,10 @@ async function scSave(spec){
     duration_min: parseInt(el("scg_dur_"+id).value, 10),
     capacity: parseInt(el("scg_cap_"+id).value, 10),
     horse_rotation: parseInt(el("scg_rot_"+id).value, 10),
+    place_id: el("scg_place_"+id) ? (el("scg_place_"+id).value || null) : undefined,
     has_leaders: el("scg_led_"+id).value === "ja"
   };
+  if(upd.place_id === undefined) delete upd.place_id;
   const d = scDescVal(id); if(d !== undefined) upd.description = d;
   const r = await db.from("rs_group").update(upd).eq("id", id);
   if(r.error){ alert("Kunde inte spara: " + r.error.message); return; }
@@ -2777,6 +2804,7 @@ async function scAdd(spec){
       duration_min: parseInt(el("scin_gdur").value, 10),
       capacity: parseInt(el("scin_gcap").value, 10),
       horse_rotation: parseInt(el("scin_grot").value, 10),
+      place_id: el("scin_gplace") ? (el("scin_gplace").value || null) : null,
       sort_order: scData.groups.length });
     if(!r.error) delete scOpen.add_group; }
   if(kind==="cat"){ const name=(el("scin_cat").value||"").trim(); if(!name) return;
@@ -2832,6 +2860,8 @@ async function scAdd(spec){
     r = await db.from("rs_horse_category").insert({ stable_id: scStableId, name, sort_order: (scData.horseCats||[]).length }); }
   if(kind==="ecat"){ const name=(el("scin_ecat").value||"").trim(); if(!name) return;
     r = await db.from("rs_student_category").insert({ stable_id: scStableId, name, sort_order: (scData.studentCats||[]).length }); }
+  if(kind==="place"){ const name=(el("scin_place").value||"").trim(); if(!name) return;
+    r = await db.from("rs_place").insert({ stable_id: scStableId, name, sort_order: (scData.places||[]).length }); }
   if(kind==="ghorse"){ const hid = el("scin_ghorse_"+a).value; if(!hid) return;
     r = await db.from("rs_group_horse").insert({ group_id: a, horse_id: hid }); }
   if(kind==="hgrp"){ const gid = el("scin_hgrp_"+a).value; if(!gid) return;
@@ -2898,6 +2928,7 @@ async function scDelete(spec){
   if(kind==="stcat"){ const c=(scData.staffCats||[]).find(x=>x.id===id); text=`Ta bort personalkategorin "${c?c.name:""}"?`; q=()=>db.from("rs_staff_category").delete().eq("id",id); }
   if(kind==="hcat"){ const c=(scData.horseCats||[]).find(x=>x.id===id); text=`Ta bort hästkategorin "${c?c.name:""}"?`; q=()=>db.from("rs_horse_category").delete().eq("id",id); }
   if(kind==="ecat"){ const c=(scData.studentCats||[]).find(x=>x.id===id); text=`Ta bort elevkategorin "${c?c.name:""}"?`; q=()=>db.from("rs_student_category").delete().eq("id",id); }
+  if(kind==="place"){ const p=(scData.places||[]).find(x=>x.id===id); text=`Ta bort platsen "${p?p.name:""}"? Lektioner som använder den blir utan plats.`; q=()=>db.from("rs_place").delete().eq("id",id); }
   if(kind==="fmail"){ const j=id.indexOf("|"); const fid=id.slice(0,j), em=decodeURIComponent(id.slice(j+1));
     text=`Ta bort mejladressen ${em}?`;
     q=()=>db.from("rs_staff_member").delete().eq("staff_id",fid).eq("email",em); }
@@ -2942,7 +2973,7 @@ async function renderSchoolSchedule(stableId){
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
     curPerm = await mySchoolPerm(stableId);
     curAdmin = curPerm === "admin";
-    const [g,s,h,ins,gi,gs,sf,gh,gf,tk,tf] = await Promise.all([
+    const [g,s,h,ins,gi,gs,sf,gh,gf,tk,tf,pl] = await Promise.all([
       db.from("rs_group").select("*, category(name)").eq("stable_id", stableId).order("weekday").order("start_time"),
       db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", stableId).order("name"),
       db.from("rs_horse").select("*").eq("stable_id", stableId).order("name"),
@@ -2953,14 +2984,16 @@ async function renderSchoolSchedule(stableId){
       db.from("rs_group_horse").select("*"),
       db.from("rs_group_staff").select("*"),
       db.from("rs_task").select("*").eq("stable_id", stableId).order("start_time"),
-      db.from("rs_task_staff").select("*")
+      db.from("rs_task_staff").select("*"),
+      db.from("rs_place").select("*").eq("stable_id", stableId).order("sort_order")
     ]);
     if(g.error) throw g.error;
     scData = { stable: st.data, groups: g.data, cats: [], students: s.error?[]:s.data, horses: h.error?[]:h.data,
                instructors: ins.error?[]:ins.data, ginstr: gi.error?[]:gi.data,
                gstud: gs.error?[]:gs.data, staff: sf.error?[]:sf.data,
                ghorse: gh.error?[]:gh.data, gstaff: gf.error?[]:gf.data,
-               tasks: tk.error?[]:tk.data, taskStaff: tf.error?[]:tf.data };
+               tasks: tk.error?[]:tk.data, taskStaff: tf.error?[]:tf.data,
+               places: pl.error?[]:pl.data };
     if(!weekStart2) weekStart2 = startOfWeek(new Date());
     el("scsShell").innerHTML = `
       <div class="card schedtop">
@@ -3037,10 +3070,11 @@ async function drawSchoolWeek(){
         tint = `background:hsla(${hu},45%,45%,.18);border-color:hsla(${hu},40%,42%,.6)`;
       } else tint = `background:var(--card-2);border-color:var(--muted)`;
       const hasNote = b.type==="les" && scWeekNotes.some(x=> x.group_id===b.o.id && x.lesson_date===dISO && (x.note||"").trim());
+      const clash = b.type==="les" && lessonConflicts(b.o).length > 0;
       const w = 100/nl;
-      return `<div class="scblk${b.type==="task"?" task":""}${isSel?" sel":""}" data-selblk="${b.type}|${b.o.id}|${wd}"
+      return `<div class="scblk${b.type==="task"?" task":""}${isSel?" sel":""}${clash?" clash":""}" data-selblk="${b.type}|${b.o.id}|${wd}"
         style="top:${(b.start-tmin)*PX}px;height:${Math.max(26, b.dur*PX-2)}px;left:calc(${b.lane*w}% + 3px);width:calc(${w}% - 6px);${tint}">
-        <b>${esc(b.o.name)}</b>${b.o.start_time}–${rsEndTime(b.o.start_time, b.o.duration_min)}${hasNote?" ✎":""}</div>`;
+        <b>${clash?"⚠ ":""}${esc(b.o.name)}</b>${b.o.start_time}–${rsEndTime(b.o.start_time, b.o.duration_min)}${hasNote?" ✎":""}</div>`;
     }).join("");
     const printBtn = scSchedMode==="lessons" && blocks.length
       ? `<button class="x dayprint" data-printday="${dISO}|${wd}" title="Skriv ut dagens schema">${ic("printer")}</button>` : "";
@@ -3088,7 +3122,7 @@ function printSchoolDay(dISO, wd){
     const freeH = linked.filter(h=> !taken.has(h.id));
     const leaderBits = [...staffN, ...instrN];
     html += `<div class="psec">
-      <h2>${g.start_time}–${rsEndTime(g.start_time, g.duration_min)} · ${esc(g.name)}${g.category&&g.category.name?` (${esc(g.category.name)})`:""}</h2>
+      <h2>${g.start_time}–${rsEndTime(g.start_time, g.duration_min)} · ${esc(g.name)}${g.category&&g.category.name?` (${esc(g.category.name)})`:""}${g.place_id?` · ${esc((((scData.places||[]).find(p=> p.id === g.place_id))||{}).name||"")}`:""}</h2>
       ${note && (note.note||"").trim() ? `<p class="pnote">Planering: ${esc(note.note)}</p>` : ""}
       <p class="pmeta">Ridlärare/ledare: ${leaderBits.length? leaderBits.map(esc).join(", ") : "–"}</p>
       ${rows ? `<table><tr><th>Elev</th><th>Häst</th></tr>${rows}</table>` : `<p class="pmeta">Inga elever på lektionen.</p>`}
@@ -3162,8 +3196,13 @@ function drawScsDetail(){
       : (((mine || canL) && dISO >= tISO) ? `<button class="btn sm" data-sick="${g.id}|${dISO}|${s.id}">Sjukanmäl</button>` : "");
     return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(s.name)}${mine?` <span class="tagpill">din</span>`:""}</span>${horseCell}${sickBit}</div>`;
   }).join("");
-  // Varningar: dubbeltilldelad häst (tillåtet men flaggas) + elever utan häst
+  // Varningar: krockar, dubbeltilldelad häst (tillåtet men flaggas) + elever utan häst
   const warns = [];
+  lessonConflicts(g).forEach(c=>{
+    const both = g.place_id && c.place_id;
+    const pn = both ? (((scData.places||[]).find(p=> p.id === g.place_id)||{}).name || "?") : null;
+    warns.push(`Krockar med ${c.name} (${c.start_time}–${rsEndTime(c.start_time, c.duration_min)})${both ? ` — samma plats (${pn})` : " — ange olika platser om de ska gå samtidigt"}`);
+  });
   const byHorse = {};
   studs.forEach(s=>{ if(sickFor(s.id)) return; const a=asgFor(s.id); if(a && a.horse_id){ (byHorse[a.horse_id]=byHorse[a.horse_id]||[]).push(s.name); } });
   Object.entries(byHorse).filter(([,names])=> names.length>1).forEach(([hid,names])=>{
@@ -3185,6 +3224,7 @@ function drawScsDetail(){
       <b>${esc(g.name)}</b>
       <span class="meta2">${dateLbl} · ${g.start_time}–${rsEndTime(g.start_time, g.duration_min)}</span>
       ${g.category&&g.category.name?`<span class="tagpill">${esc(g.category.name)}</span>`:""}
+      ${g.place_id?`<span class="tagpill">${esc((((scData.places||[]).find(p=> p.id === g.place_id))||{}).name||"?")}</span>`:""}
       <span class="meta2" style="margin-left:auto">byte efter ${g.horse_rotation} ggr</span>
     </div>
     ${g.description?`<div class="meta2" style="margin-top:4px">${esc(g.description)}</div>`:""}

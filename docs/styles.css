@@ -107,6 +107,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .scblk b{display:block;font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scblk.task{border-style:dashed}
 .scblk.sel{outline:2px solid var(--accent);z-index:2}
+.scblk.clash{border-color:var(--danger);border-width:2px}
 @media (max-width:640px){
   .scg{gap:3px}
   .scg .gut{width:26px}
