@@ -1178,6 +1178,7 @@ function buildProfileMenu(){
     <button class="menuitem" data-act="requests">${ic("swap")} Mina förfrågningar</button>
     ${tree}
     <button class="menuitem" data-act="newstable">${ic("plus")} Nytt stall</button>
+    <button class="menuitem" data-act="invite">${ic("mail")} Bjud in till stallet</button>
     <button class="menuitem" data-act="logout">${ic("logout")} Logga ut</button>`;
   m.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=> profileAction(b.getAttribute("data-act")));
   m.querySelectorAll("[data-bookas]").forEach(b=> b.onclick = ()=>{
@@ -1225,6 +1226,7 @@ async function profileAction(act){
   closeProfileMenu();
   if(act==="requests"){ gotoView("requests"); return; }
   if(act==="newstable"){ createOrgDialog(); return; }
+  if(act==="invite"){ inviteDialog(); return; }
   if(act==="logout"){
     if(!(await confirmDialog("Vill du logga ut? Du behöver en ny inloggningslänk via mejl för att logga in igen.", { title:"Logga ut", okText:"Ja, logga ut", primary:true }))) return;
     await db.auth.signOut(); view = { name:"home", stableId:null }; return;
@@ -1373,12 +1375,12 @@ async function openBellMenu(){
   const mine = (r.data||[]).filter(bellRelevant);
   let rems = [];
   try{ rems = await getDueReminders(); }catch(e){}
-  const iq = await db.from("invite").select("id,invited_by,stable(name),profile(name)").eq("email", session.email).eq("status","pending");
+  const iq = await db.from("invite").select("id,invited_by,kind,staff_perm,invite_name,stable(name),profile(name)").eq("email", session.email).eq("status","pending");
   const invs = iq.error ? [] : (iq.data||[]);
   if(!mine.length && !rems.length && !invs.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
   const invHtml = invs.map(v=>
     `<div class="notif"><div>📩 <b>${esc(v.invited_by)}</b> har bjudit in dig till stallet <b>${esc((v.stable&&v.stable.name)||"?")}</b></div>
-      <div class="meta2">Som profilen ${esc((v.profile&&v.profile.name)||"?")}</div>
+      <div class="meta2">Som ${esc(inviteRoleLabel(v))}</div>
       <div class="notifbtns"><button class="btn primary sm" data-invacc="${v.id}">Acceptera</button><button class="btn sm" data-invdec="${v.id}">Avböj</button></div></div>`).join("");
   const remHtml = invHtml + rems.map(rm=>
     `<div class="notif"><div>⏰ Påminnelse: du har pass <b>${esc(rm.passName)}</b></div><div class="meta2">${esc(remWhen(rm.start))}</div>
@@ -1419,15 +1421,92 @@ async function openBellMenu(){
     await refreshBellCount();
     openBellMenu();
   });
-  m.querySelectorAll("[data-invacc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveInvite(b.getAttribute("data-invacc"), true); });
+  m.querySelectorAll("[data-invacc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); const id=b.getAttribute("data-invacc"); resolveInvite(id, true, invs.find(v=> v.id===id)); });
   m.querySelectorAll("[data-invdec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveInvite(b.getAttribute("data-invdec"), false); });
 }
-async function resolveInvite(id, accept){
-  const r = await db.from("invite").update({ status: accept ? "accepted" : "declined", responded_at: new Date().toISOString() }).eq("id", id);
+function namePromptDialog(){
+  return new Promise(res=>{
+    const ov = document.createElement("div"); ov.className = "modal-ov";
+    ov.innerHTML = `<div class="modal"><h3>Vad heter du?</h3>
+      <p>Ditt namn visas i stallets listor och scheman.</p>
+      <div class="field"><input type="text" id="npName" placeholder="För- och efternamn" maxlength="60"></div>
+      <div class="modal-btns"><button class="btn" id="npCancel">Avbryt</button><button class="btn primary" id="npOk">Klar</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = v=>{ ov.remove(); res(v); };
+    ov.querySelector("#npCancel").onclick = ()=> done(null);
+    ov.querySelector("#npOk").onclick = ()=>{ const v=(el("npName").value||"").trim(); if(!v){ el("npName").focus(); return; } done(v); };
+    setTimeout(()=> el("npName").focus(), 50);
+  });
+}
+async function resolveInvite(id, accept, inv){
+  let name = null;
+  if(accept && inv && inv.kind === "staff" && !((inv.invite_name||"").trim())){
+    name = await namePromptDialog();
+    if(name === null) return;   // avbröt — inbjudan lämnas obesvarad
+  }
+  const r = await db.rpc("respond_invite", { p_invite: id, p_accept: accept, p_name: name });
   if(r.error){ alert("Kunde inte svara på inbjudan: " + r.error.message); return; }
   await refreshBellCount();
   if(el("bellMenu").classList.contains("open")) await openBellMenu();
   if(view.name === "home") render();   // stallistan kan ha ändrats
+}
+function inviteRoleLabel(v){
+  if(v.kind === "admin") return "admin";
+  if(v.kind === "staff") return v.staff_perm === "teacher" ? "ridlärare" : "stallpersonal";
+  return "profilen " + ((v.profile && v.profile.name) || "?");
+}
+/* Bjud in via mejl: stallpersonal, ridlärare eller admin. Rollen delas ut när personen accepterar. */
+async function inviteDialog(){
+  closeProfileMenu();
+  if(!session) return;
+  const stables = (await loadMyStables()).filter(u=> u.id && u.isAdmin);
+  if(!stables.length){ infoDialog("Bara admins kan bjuda in. Be en admin i stallet skicka inbjudan.", "Bjud in"); return; }
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  const stO = stables.map(s=>`<option value="${s.id}" data-kind="${s.kind}">${esc(unitLabel(s))}</option>`).join("");
+  ov.innerHTML = `<div class="modal"><h3>Bjud in till stallet</h3>
+    <div class="field"><label class="fld">Stall</label><select id="iv_stable">${stO}</select></div>
+    <div class="field"><label class="fld">Namn</label><input type="text" id="iv_name" placeholder="Personens namn" maxlength="60"></div>
+    <div class="field"><label class="fld">Mejladress</label><input type="email" id="iv_mail" placeholder="namn@exempel.se"></div>
+    <div class="field"><label class="fld">Roll</label><select id="iv_role"></select></div>
+    <div id="iv_msg"></div>
+    <div class="modal-btns"><button class="btn" id="iv_cancel">Avbryt</button><button class="btn primary" id="iv_send">Skicka inbjudan</button></div></div>`;
+  document.body.appendChild(ov);
+  const fillRoles = ()=>{
+    const opt = ov.querySelector("#iv_stable option:checked");
+    const kind = opt ? opt.getAttribute("data-kind") : "stall";
+    ov.querySelector("#iv_role").innerHTML = kind === "ridskola"
+      ? `<option value="staff:none">Stallpersonal — ser allt, ändrar inget</option>
+         <option value="staff:teacher">Ridlärare — lektioner, elever och hästar</option>
+         <option value="admin">Admin — full behörighet</option>`
+      : `<option value="admin">Admin — full behörighet</option>`;
+  };
+  fillRoles();
+  ov.querySelector("#iv_stable").onchange = fillRoles;
+  ov.querySelector("#iv_cancel").onclick = ()=> ov.remove();
+  ov.querySelector("#iv_send").onclick = async ()=>{
+    const sid = el("iv_stable").value;
+    const name = (el("iv_name").value||"").trim();
+    const email = normEmail(el("iv_mail").value);
+    const roleV = el("iv_role").value;
+    if(!email.includes("@")){ el("iv_msg").innerHTML = msg("Skriv en giltig mejladress.", "err"); return; }
+    const kind = roleV === "admin" ? "admin" : "staff";
+    const staff_perm = kind === "staff" ? roleV.split(":")[1] : null;
+    const r = await db.from("invite").insert({ stable_id: sid, email, invited_by: session.email, kind, staff_perm, invite_name: name || null });
+    if(r.error){
+      const dup = (r.error.code === "23505") || /duplicate/i.test(r.error.message||"");
+      el("iv_msg").innerHTML = msg(dup ? "Personen har redan en inbjudan med den rollen i det stallet." : "Kunde inte skapa inbjudan: " + r.error.message, "err");
+      return;
+    }
+    // skicka inloggningsmejl — länken loggar in personen, inbjudan väntar sedan i notisklockan
+    let mailNote = "";
+    try{
+      const redirect = window.location.origin + window.location.pathname;
+      const m = await db.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: redirect } });
+      if(m.error) mailNote = " Obs: mejlet kunde inte skickas (" + m.error.message + ") — be personen logga in själv på appen.";
+    }catch(e){ mailNote = " Obs: mejlet kunde inte skickas — be personen logga in själv på appen."; }
+    ov.remove();
+    infoDialog("Inbjudan till " + email + " är skickad! Personen får ett mejl med inloggningslänk och svarar sedan på inbjudan i notisklockan." + mailNote, "Inbjudan skickad");
+  };
 }
 async function resolveRequest(id, accept){
   const r = await db.rpc("resolve_pass_request", { p_request: id, p_accept: accept });
@@ -1678,7 +1757,7 @@ async function renderRequests(stableId){
       return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow">${txt}</div>${stTag}</div><div class="meta2">${meta}</div>${btns}</div>`;
     }).join("") : `<div class="empty">Inga förfrågningar än. Klicka på ett pass i schemat för att skicka en.</div>`;
     // Inbjudningar (alla mina, oavsett stall) — avböjda kan accepteras i efterhand
-    const ivq = await db.from("invite").select("id,status,invited_by,created_at,stable(name),profile(name)").eq("email", session.email).order("created_at",{ascending:false});
+    const ivq = await db.from("invite").select("id,status,invited_by,created_at,kind,staff_perm,invite_name,stable(name),profile(name)").eq("email", session.email).order("created_at",{ascending:false});
     const myInv = ivq.error ? [] : (ivq.data||[]);
     const invList = myInv.length ? myInv.map(v=>{
       const stTag = v.status === "pending" ? `<span class="tagpill st-pend">väntar</span>`
@@ -1689,7 +1768,7 @@ async function renderRequests(stableId){
         ? `<div class="notifbtns"><button class="btn primary sm" data-ivacc="${v.id}">Acceptera</button><button class="btn sm" data-ivdec="${v.id}">Avböj</button></div>`
         : v.status === "declined"
         ? `<div class="notifbtns"><button class="btn primary sm" data-ivacc="${v.id}">Acceptera ändå</button></div>` : "";
-      return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow"><b>${esc(v.invited_by)}</b> bjöd in dig till <b>${esc((v.stable&&v.stable.name)||"?")}</b> som ${esc((v.profile&&v.profile.name)||"?")}</div>${stTag}</div>
+      return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow"><b>${esc(v.invited_by)}</b> bjöd in dig till <b>${esc((v.stable&&v.stable.name)||"?")}</b> som ${esc(inviteRoleLabel(v))}</div>${stTag}</div>
         <div class="meta2">${cd?`Skickad ${cd.getDate()}/${cd.getMonth()+1}`:""}</div>${btns}</div>`;
     }).join("") : "";
     el("reqShell").innerHTML = `
@@ -1698,7 +1777,7 @@ async function renderRequests(stableId){
       <div class="card">${list}</div>`;
     document.querySelectorAll("[data-racc]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-racc"), true); renderRequests(stableId); });
     document.querySelectorAll("[data-rdec]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-rdec"), false); renderRequests(stableId); });
-    document.querySelectorAll("[data-ivacc]").forEach(b=> b.onclick = async ()=>{ await resolveInvite(b.getAttribute("data-ivacc"), true); renderRequests(stableId); });
+    document.querySelectorAll("[data-ivacc]").forEach(b=> b.onclick = async ()=>{ const id=b.getAttribute("data-ivacc"); await resolveInvite(id, true, myInv.find(v=> v.id===id)); renderRequests(stableId); });
     document.querySelectorAll("[data-ivdec]").forEach(b=> b.onclick = async ()=>{ await resolveInvite(b.getAttribute("data-ivdec"), false); renderRequests(stableId); });
   }catch(e){ el("reqShell").innerHTML = msg("Kunde inte hämta förfrågningar: " + (e.message||e), "err"); }
 }
