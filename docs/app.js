@@ -3045,8 +3045,8 @@ async function drawSchoolWeek(){
   const days = [1,2,3,4,5,6,7].filter(wd=> items.some(i=> i.wd === wd));
   const tmin = Math.floor(Math.min(...items.map(i=> i.start))/60)*60;
   const tmax = Math.ceil(Math.max(...items.map(i=> i.start+i.dur))/60)*60;
-  const PX = 1.1;   // pixlar per minut
-  const bodyH = Math.max(60, (tmax-tmin)*PX);
+  const PX = 1.9;   // pixlar per minut — högre skala ger större, mer stående lektionsblock
+  const bodyH = Math.max(90, (tmax-tmin)*PX);
   const tISO = isoDate(new Date());
   const catTint = {}; let ci = 0;
   scData.groups.forEach(g=>{ const k=g.category_id||"none"; if(k!=="none" && !(k in catTint)){ catTint[k]=CAT_HUES[ci%CAT_HUES.length]; ci++; } });
@@ -3073,7 +3073,7 @@ async function drawSchoolWeek(){
       const clash = b.type==="les" && lessonConflicts(b.o).length > 0;
       const w = 100/nl;
       return `<div class="scblk${b.type==="task"?" task":""}${isSel?" sel":""}${clash?" clash":""}" data-selblk="${b.type}|${b.o.id}|${wd}"
-        style="top:${(b.start-tmin)*PX}px;height:${Math.max(26, b.dur*PX-2)}px;left:calc(${b.lane*w}% + 3px);width:calc(${w}% - 6px);${tint}">
+        style="top:${(b.start-tmin)*PX}px;height:${Math.max(40, b.dur*PX-2)}px;left:calc(${b.lane*w}% + 3px);width:calc(${w}% - 6px);${tint}">
         <b>${clash?"⚠ ":""}${esc(b.o.name)}</b>${b.o.start_time}–${rsEndTime(b.o.start_time, b.o.duration_min)}${hasNote?" ✎":""}</div>`;
     }).join("");
     const printBtn = scSchedMode==="lessons" && blocks.length

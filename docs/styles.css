@@ -91,9 +91,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .taskcard{border-style:dashed}
 /* Ridskolans veckorutnät: dagar i x-led, tid i y-led. Hela veckan syns utan sidoskroll. */
 .scgw{overflow:visible}
-.scg{display:flex;gap:5px}
+.scg{display:flex;gap:5px;justify-content:center}
 .scg .gut{width:40px;flex:0 0 auto}
-.scg .day{flex:1;min-width:0}
+.scg .day{flex:1;min-width:0;max-width:150px}
 .scg .dhead{text-align:center;font-weight:700;font-size:.8rem;padding:4px 0 6px;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:4px}
 .scg .dayprint{border:none;background:transparent;color:var(--muted);padding:2px;border-radius:6px;cursor:pointer;line-height:0}
 .scg .dayprint:hover{color:var(--accent);background:var(--accent-soft)}
@@ -103,8 +103,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .scg .dbody{position:relative;background:var(--card-2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .scg .hline{position:absolute;left:0;right:0;border-top:1px dashed var(--line);opacity:.5}
 .scg .hlbl{position:absolute;right:6px;transform:translateY(-50%);font-size:.68rem;color:var(--muted)}
-.scblk{position:absolute;border:1px solid;border-radius:8px;padding:2px 5px;font-size:.68rem;line-height:1.25;cursor:pointer;overflow:hidden;color:var(--ink)}
-.scblk b{display:block;font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scblk{position:absolute;border:1px solid;border-radius:10px;padding:6px 8px;font-size:.78rem;line-height:1.3;cursor:pointer;overflow:hidden;color:var(--ink)}
+.scblk b{display:block;font-size:.82rem;margin-bottom:1px}
 .scblk.task{border-style:dashed}
 .scblk.sel{outline:2px solid var(--accent);z-index:2}
 .scblk.clash{border-color:var(--danger);border-width:2px}
@@ -114,8 +114,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
   .scg .hlbl{font-size:.55rem;right:2px}
   .scg .dhead{font-size:.62rem;gap:2px}
   .scg .dayprint .icn{width:12px;height:12px}
-  .scblk{font-size:.56rem;padding:1px 3px;border-radius:6px}
-  .scblk b{font-size:.58rem}
+  .scblk{font-size:.64rem;padding:3px 5px;border-radius:8px}
+  .scblk b{font-size:.66rem}
 }
 /* Utskrift av dagsschema: bara utskriftsarket syns, i EquiWorks-stil */
 .printsheet{display:none}
