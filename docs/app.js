@@ -1459,7 +1459,8 @@ function inviteRoleLabel(v){
 async function inviteDialog(){
   closeProfileMenu();
   if(!session) return;
-  const stables = (await loadMyStables()).filter(u=> u.id && u.isAdmin);
+  const stables = (await loadMyStables()).filter(u=> u.id && u.isAdmin)
+    .sort((a,b)=> (a.kind==="ridskola"?0:1) - (b.kind==="ridskola"?0:1));   // ridskolor först — de har flest roller
   if(!stables.length){ infoDialog("Bara admins kan bjuda in. Be en admin i stallet skicka inbjudan.", "Bjud in"); return; }
   const ov = document.createElement("div"); ov.className = "modal-ov";
   const stO = stables.map(s=>`<option value="${s.id}" data-kind="${s.kind}">${esc(unitLabel(s))}</option>`).join("");
@@ -1468,6 +1469,7 @@ async function inviteDialog(){
     <div class="field"><label class="fld">Namn</label><input type="text" id="iv_name" placeholder="Personens namn" maxlength="60"></div>
     <div class="field"><label class="fld">Mejladress</label><input type="email" id="iv_mail" placeholder="namn@exempel.se"></div>
     <div class="field"><label class="fld">Roll</label><select id="iv_role"></select></div>
+    <div id="iv_hint"></div>
     <div id="iv_msg"></div>
     <div class="modal-btns"><button class="btn" id="iv_cancel">Avbryt</button><button class="btn primary" id="iv_send">Skicka inbjudan</button></div></div>`;
   document.body.appendChild(ov);
@@ -1479,6 +1481,15 @@ async function inviteDialog(){
          <option value="staff:teacher">Ridlärare — lektioner, elever och hästar</option>
          <option value="admin">Admin — full behörighet</option>`
       : `<option value="admin">Admin — full behörighet</option>`;
+    ov.querySelector("#iv_hint").innerHTML = kind === "ridskola"
+      ? `<div class="meta2" style="margin:2px 0 10px">Letar du efter att lägga till <b>elever</b>? Det görs i inställningarna. <button class="btn sm" id="iv_open" style="margin-left:6px">Öppna inställningar</button></div>`
+      : `<div class="meta2" style="margin:2px 0 10px">Medlemmar i jourstallet läggs till via en profil (Inställningar → profilen → + Mejl) — de får då en inbjudan automatiskt. <button class="btn sm" id="iv_open" style="margin-left:6px">Öppna inställningar</button></div>`;
+    ov.querySelector("#iv_open").onclick = ()=>{
+      const sid = el("iv_stable").value;
+      ov.remove();
+      view = { name:"stable", stableId: sid };
+      render();
+    };
   };
   fillRoles();
   ov.querySelector("#iv_stable").onchange = fillRoles;
