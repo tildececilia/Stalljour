@@ -276,9 +276,14 @@ async function loadMyStables(){
       units.forEach(u=> map.set(u.id, { id:u.id, name:u.name, kind:u.kind||"stall", orgId:o.id, orgName:o.name, isAdmin:true }));
       if(!units.length) map.set("org-"+o.id, { id:null, emptyOrg:true, name:o.name, kind:"stall", orgId:o.id, orgName:o.name, isAdmin:true });
     });
-    const mem = await db.from("profile_member").select("profile(stable(id,name,kind,org_id,org(name)))").eq("email", session.email);
+    // profilmedlemskap där jag avböjt inbjudan visas inte (kan ångras i Mina förfrågningar)
+    let declined = new Set();
+    const dv = await db.from("invite").select("profile_id").eq("email", session.email).eq("status","declined");
+    if(!dv.error) declined = new Set((dv.data||[]).map(x=> x.profile_id));
+    const mem = await db.from("profile_member").select("profile(id,stable(id,name,kind,org_id,org(name)))").eq("email", session.email);
     if(!mem.error) (mem.data||[]).forEach(r=>{
       const s = r.profile && r.profile.stable; if(!s || map.has(s.id)) return;
+      if(r.profile && declined.has(r.profile.id)) return;
       map.set(s.id, { id:s.id, name:s.name, kind:s.kind||"stall", orgId:s.org_id, orgName:(s.org&&s.org.name)||s.name, isAdmin:false });
     });
     const sm = await db.from("rs_student_member").select("rs_student(stable(id,name,kind,org_id,org(name)))").eq("email", session.email);
@@ -778,7 +783,11 @@ async function doAdd(spec){
   if(kind==="cat"){ const name=(el("in_cat").value||"").trim(); if(!name) return;
     r = await db.from("category").insert({ stable_id:stStableId, name, sort_order:stData.cats.length }); }
   if(kind==="mail"){ const email=normEmail(el("in_mail_"+a+"_"+b).value); if(!email.includes("@")){ await infoDialog("Skriv en giltig mejladress i fältet först.", "Mejl saknas"); return; }
-    r = await db.from("profile_member").insert({ profile_id:b, email }); }
+    r = await db.from("profile_member").insert({ profile_id:b, email });
+    if(!r.error && email !== session.email){
+      // skapa inbjudan — syns i personens notisklocka när hen loggar in (fel ignoreras, t.ex. dubblett)
+      await db.from("invite").insert({ stable_id: stStableId, profile_id: b, email, invited_by: session.email });
+    } }
   if(kind==="horse"){ const name=(el("in_horse_"+a+"_"+b).value||"").trim(); const gid=el("in_horsegrp_"+a+"_"+b).value||null;
     if(!name){ await infoDialog("Skriv hästens namn i fältet först, välj grupp och tryck sedan på + Lägg till häst.", "Namn saknas"); return; }
     r = await db.from("horse").insert({ profile_id:b, name, group_id:gid }); }
@@ -1339,6 +1348,8 @@ async function refreshBellCount(){
   if(!myProfileIds.size) await refreshMyProfiles();
   const r = await db.from("pass_request").select("id,to_profile,from_profile,status,seen_by_requester");
   let n = r.error ? 0 : (r.data||[]).filter(bellRelevant).length;
+  const iv = await db.from("invite").select("id").eq("email", session.email).eq("status","pending");
+  if(!iv.error) n += (iv.data||[]).length;
   try{ dueReminders = await getDueReminders(); n += dueReminders.length; }catch(e){}
   if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
 }
@@ -1356,8 +1367,14 @@ async function openBellMenu(){
   const mine = (r.data||[]).filter(bellRelevant);
   let rems = [];
   try{ rems = await getDueReminders(); }catch(e){}
-  if(!mine.length && !rems.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
-  const remHtml = rems.map(rm=>
+  const iq = await db.from("invite").select("id,invited_by,stable(name),profile(name)").eq("email", session.email).eq("status","pending");
+  const invs = iq.error ? [] : (iq.data||[]);
+  if(!mine.length && !rems.length && !invs.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const invHtml = invs.map(v=>
+    `<div class="notif"><div>📩 <b>${esc(v.invited_by)}</b> har bjudit in dig till stallet <b>${esc((v.stable&&v.stable.name)||"?")}</b></div>
+      <div class="meta2">Som profilen ${esc((v.profile&&v.profile.name)||"?")}</div>
+      <div class="notifbtns"><button class="btn primary sm" data-invacc="${v.id}">Acceptera</button><button class="btn sm" data-invdec="${v.id}">Avböj</button></div></div>`).join("");
+  const remHtml = invHtml + rems.map(rm=>
     `<div class="notif"><div>⏰ Påminnelse: du har pass <b>${esc(rm.passName)}</b></div><div class="meta2">${esc(remWhen(rm.start))}</div>
       <div class="notifbtns"><button class="btn sm" data-remok="${esc(rm.key)}">Ok</button></div></div>`).join("");
   m.innerHTML = remHtml + mine.map(q=>{
@@ -1396,6 +1413,15 @@ async function openBellMenu(){
     await refreshBellCount();
     openBellMenu();
   });
+  m.querySelectorAll("[data-invacc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveInvite(b.getAttribute("data-invacc"), true); });
+  m.querySelectorAll("[data-invdec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveInvite(b.getAttribute("data-invdec"), false); });
+}
+async function resolveInvite(id, accept){
+  const r = await db.from("invite").update({ status: accept ? "accepted" : "declined", responded_at: new Date().toISOString() }).eq("id", id);
+  if(r.error){ alert("Kunde inte svara på inbjudan: " + r.error.message); return; }
+  await refreshBellCount();
+  if(el("bellMenu").classList.contains("open")) await openBellMenu();
+  if(view.name === "home") render();   // stallistan kan ha ändrats
 }
 async function resolveRequest(id, accept){
   const r = await db.rpc("resolve_pass_request", { p_request: id, p_accept: accept });
@@ -1645,11 +1671,29 @@ async function renderRequests(stableId){
         ? `<div class="notifbtns"><button class="btn primary sm" data-racc="${q.id}">Bekräfta</button><button class="btn sm" data-rdec="${q.id}">Avböj</button></div>` : "";
       return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow">${txt}</div>${stTag}</div><div class="meta2">${meta}</div>${btns}</div>`;
     }).join("") : `<div class="empty">Inga förfrågningar än. Klicka på ett pass i schemat för att skicka en.</div>`;
+    // Inbjudningar (alla mina, oavsett stall) — avböjda kan accepteras i efterhand
+    const ivq = await db.from("invite").select("id,status,invited_by,created_at,stable(name),profile(name)").eq("email", session.email).order("created_at",{ascending:false});
+    const myInv = ivq.error ? [] : (ivq.data||[]);
+    const invList = myInv.length ? myInv.map(v=>{
+      const stTag = v.status === "pending" ? `<span class="tagpill st-pend">väntar</span>`
+                  : v.status === "accepted" ? `<span class="tagpill">accepterad</span>`
+                  : `<span class="tagpill st-no">avböjd</span>`;
+      const cd = v.created_at ? new Date(v.created_at) : null;
+      const btns = v.status === "pending"
+        ? `<div class="notifbtns"><button class="btn primary sm" data-ivacc="${v.id}">Acceptera</button><button class="btn sm" data-ivdec="${v.id}">Avböj</button></div>`
+        : v.status === "declined"
+        ? `<div class="notifbtns"><button class="btn primary sm" data-ivacc="${v.id}">Acceptera ändå</button></div>` : "";
+      return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow"><b>${esc(v.invited_by)}</b> bjöd in dig till <b>${esc((v.stable&&v.stable.name)||"?")}</b> som ${esc((v.profile&&v.profile.name)||"?")}</div>${stTag}</div>
+        <div class="meta2">${cd?`Skickad ${cd.getDate()}/${cd.getMonth()+1}`:""}</div>${btns}</div>`;
+    }).join("") : "";
     el("reqShell").innerHTML = `
       <div class="card schedtop"><div class="schedeyebrow">Mina förfrågningar</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
+      ${invList?`<div class="card"><div class="sublabel" style="margin-bottom:8px">Inbjudningar</div>${invList}</div>`:""}
       <div class="card">${list}</div>`;
     document.querySelectorAll("[data-racc]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-racc"), true); renderRequests(stableId); });
     document.querySelectorAll("[data-rdec]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-rdec"), false); renderRequests(stableId); });
+    document.querySelectorAll("[data-ivacc]").forEach(b=> b.onclick = async ()=>{ await resolveInvite(b.getAttribute("data-ivacc"), true); renderRequests(stableId); });
+    document.querySelectorAll("[data-ivdec]").forEach(b=> b.onclick = async ()=>{ await resolveInvite(b.getAttribute("data-ivdec"), false); renderRequests(stableId); });
   }catch(e){ el("reqShell").innerHTML = msg("Kunde inte hämta förfrågningar: " + (e.message||e), "err"); }
 }
 
