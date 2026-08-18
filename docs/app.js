@@ -1602,14 +1602,106 @@ async function sendPassRequest(type, bookingId, fromP, toP, label){
 document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
 
 /* ============ Mina pass ============ */
+/* Mina lektioner (ridskola): kommande fyra veckor för mina elever + lektioner jag jobbar/leder på */
+async function renderMyLessons(stableId){
+  try{
+    const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
+    const [g,s,h,gs,sf,gf,ins,gi] = await Promise.all([
+      db.from("rs_group").select("*, category(name)").eq("stable_id", stableId).order("weekday").order("start_time"),
+      db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", stableId).order("name"),
+      db.from("rs_horse").select("id,name").eq("stable_id", stableId),
+      db.from("rs_group_student").select("*"),
+      db.from("rs_staff").select("id,name,rs_staff_member(email)").eq("stable_id", stableId),
+      db.from("rs_group_staff").select("*"),
+      db.from("rs_instructor").select("id,name,rs_instructor_member(email)").eq("stable_id", stableId),
+      db.from("rs_group_instructor").select("*")
+    ]);
+    if(g.error) throw g.error;
+    const groups = g.data||[], students = s.error?[]:s.data, horses = h.error?[]:h.data;
+    const gstud = gs.error?[]:gs.data, staff = sf.error?[]:sf.data, gstaff = gf.error?[]:gf.data;
+    const instrs = ins.error?[]:ins.data, ginstr = gi.error?[]:gi.data;
+    const myStud = new Set(students.filter(x=> (x.rs_student_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(x=> x.id));
+    const myStaff = new Set(staff.filter(x=> (x.rs_staff_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(x=> x.id));
+    const myInstr = new Set(instrs.filter(x=> (x.rs_instructor_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(x=> x.id));
+    const rel = groups.filter(gr=>
+      gstud.some(x=> x.group_id===gr.id && myStud.has(x.student_id)) ||
+      gstaff.some(x=> x.group_id===gr.id && myStaff.has(x.staff_id)) ||
+      ginstr.some(x=> x.group_id===gr.id && myInstr.has(x.instructor_id)));
+    const today = new Date(); today.setHours(0,0,0,0);
+    const tISO = isoDate(today);
+    const endD = new Date(today); endD.setDate(endD.getDate()+27);
+    const endISO = isoDate(endD);
+    let asg = [], abs = [], notes = [];
+    if(rel.length){
+      const ids = rel.map(x=> x.id);
+      const [aq,bq,nq] = await Promise.all([
+        db.from("rs_assignment").select("*").in("group_id", ids).gte("lesson_date", tISO).lte("lesson_date", endISO),
+        db.from("rs_absence").select("*").in("group_id", ids).gte("lesson_date", tISO).lte("lesson_date", endISO),
+        db.from("rs_lesson_note").select("*").in("group_id", ids).gte("lesson_date", tISO).lte("lesson_date", endISO)
+      ]);
+      asg = aq.error?[]:aq.data; abs = bq.error?[]:bq.data; notes = nq.error?[]:nq.data;
+    }
+    let html = "";
+    for(let i=0;i<28;i++){
+      const d = new Date(today); d.setDate(d.getDate()+i);
+      const wd = ((d.getDay()+6)%7)+1;
+      const dayRel = rel.filter(gr=> gr.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b));
+      if(!dayRel.length) continue;
+      const dISO = isoDate(d);
+      html += `<div class="sublabel" style="margin-top:16px">${RS_WD[wd]} ${d.getDate()}/${d.getMonth()+1}${dISO===tISO?' · <span style="color:var(--accent)">idag</span>':""}</div>`;
+      dayRel.forEach(gr=>{
+        const note = notes.find(x=> x.group_id===gr.id && x.lesson_date===dISO);
+        const roles = [];
+        if(gstaff.some(x=> x.group_id===gr.id && myStaff.has(x.staff_id))) roles.push(`<div class="meta2">Du är personal på lektionen</div>`);
+        if(ginstr.some(x=> x.group_id===gr.id && myInstr.has(x.instructor_id))) roles.push(`<div class="meta2">Du är ledare på lektionen</div>`);
+        const rows = gstud.filter(x=> x.group_id===gr.id && myStud.has(x.student_id)).map(x=>{
+          const stu = students.find(y=> y.id===x.student_id); if(!stu) return "";
+          const a = asg.find(y=> y.group_id===gr.id && y.lesson_date===dISO && y.student_id===stu.id);
+          const hn = a && a.horse_id ? (((horses.find(z=> z.id===a.horse_id))||{}).name || "?") : "ej tilldelad än";
+          const sick = abs.some(y=> y.group_id===gr.id && y.lesson_date===dISO && y.student_id===stu.id);
+          const sickBit = sick
+            ? `<span class="tagpill st-no" data-mlunsick="${gr.id}|${dISO}|${stu.id}" style="cursor:pointer" title="Ta bort sjukanmälan">sjuk</span>`
+            : `<button class="btn sm" data-mlsick="${gr.id}|${dISO}|${stu.id}">Sjukanmäl</button>`;
+          return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(stu.name)}</span><span class="meta2">Häst: ${esc(hn)}</span>${sickBit}</div>`;
+        }).join("");
+        html += `<div class="card">
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+            <b>${esc(gr.name)}</b>
+            <span class="meta2">${gr.start_time}–${rsEndTime(gr.start_time, gr.duration_min)}</span>
+            ${gr.category&&gr.category.name?`<span class="tagpill">${esc(gr.category.name)}</span>`:""}
+          </div>
+          ${note && (note.note||"").trim() ? `<div class="meta2" style="margin-top:4px">Planering: ${esc(note.note)}</div>` : ""}
+          ${roles.join("")}
+          ${rows ? `<div style="margin-top:8px">${rows}</div>` : ""}
+        </div>`;
+      });
+    }
+    el("mineShell").innerHTML = `
+      <div class="card schedtop"><div class="schedeyebrow">Mina lektioner</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
+      ${html || `<div class="card"><div class="empty">Inga kommande lektioner för dig de närmaste fyra veckorna.</div></div>`}`;
+    document.querySelectorAll("[data-mlsick]").forEach(b=> b.onclick = async ()=>{
+      const [gid, dI, sid] = b.getAttribute("data-mlsick").split("|");
+      const stu = students.find(x=> x.id === sid);
+      const dd = new Date(dI+"T00:00:00");
+      if(!(await confirmDialog(`Sjukanmäla ${stu?stu.name:"eleven"} till lektionen ${RS_WD[((dd.getDay()+6)%7)+1].toLowerCase()} ${dd.getDate()}/${dd.getMonth()+1}?`, { title:"Sjukanmälan", okText:"Ja, sjukanmäl", primary:true }))) return;
+      const r = await db.from("rs_absence").insert({ group_id: gid, lesson_date: dI, student_id: sid });
+      if(r.error){ alert("Kunde inte sjukanmäla: " + r.error.message); return; }
+      renderMyLessons(stableId);
+    });
+    document.querySelectorAll("[data-mlunsick]").forEach(b=> b.onclick = async ()=>{
+      const [gid, dI, sid] = b.getAttribute("data-mlunsick").split("|");
+      if(!(await confirmDialog("Ta bort sjukanmälan?", { okText:"Ja, ta bort" }))) return;
+      await db.from("rs_absence").delete().eq("group_id",gid).eq("lesson_date",dI).eq("student_id",sid);
+      renderMyLessons(stableId);
+    });
+  }catch(e){ el("mineShell").innerHTML = msg("Kunde inte hämta lektioner: " + (e.message||e), "err"); }
+}
+
 async function renderMyPasses(stableId){
   appEl.innerHTML = `<div id="mineShell"><div class="card"><div class="empty">Laddar…</div></div></div>`;
   try{
     const kq = await db.from("stable").select("kind").eq("id", stableId).single();
-    if(!kq.error && kq.data && kq.data.kind === "ridskola"){
-      el("mineShell").innerHTML = `<div class="card"><div class="empty">"Mina lektioner" för ridskolor kommer i nästa steg — öppna schemat så länge.</div></div>`;
-      return;
-    }
+    if(!kq.error && kq.data && kq.data.kind === "ridskola"){ renderMyLessons(stableId); return; }
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
     const g  = await db.from("duty_group").select("*").eq("stable_id", stableId).order("sort_order"); if(g.error) throw g.error;
     const pr = await db.from("profile").select("id,name,profile_member(email),horse(group_id)").eq("stable_id", stableId); if(pr.error) throw pr.error;
@@ -2997,6 +3089,7 @@ function drawScsDetail(){
       return h + `</div>`;
     })()}
     ${warns.map(w=> `<div class="msg warn" style="margin-top:8px;margin-bottom:0">⚠ ${esc(w)}</div>`).join("")}
+    <div id="scsRotWarn"></div>
     <div style="margin-top:10px"><b style="font-size:.85rem">Elever & hästar</b>
       ${rows || `<div class="empty">Inga elever på lektionen än — lägg till i Inställningar.</div>`}
     </div>
@@ -3065,6 +3158,39 @@ function drawScsDetail(){
     if(r.error){ alert("Kunde inte rotera: " + r.error.message); return; }
     drawSchoolWeek();
   });
+  loadRotationHints(g, dISO);
+}
+
+/* Rotationshint: räkna hur många gånger i rad varje elev ridit sin nuvarande häst.
+   Når streaken lektionens "byt häst efter X ggr" flaggas det i panelen. */
+let scRotToken = 0;
+async function loadRotationHints(g, dISO){
+  const host = el("scsRotWarn"); if(!host) return;
+  const token = ++scRotToken;
+  const studs = scData.gstud.filter(x=> x.group_id===g.id).map(x=> scData.students.find(s=> s.id===x.student_id)).filter(Boolean);
+  if(!studs.length) return;
+  const hq = await db.from("rs_assignment").select("*").eq("group_id", g.id).lt("lesson_date", dISO).order("lesson_date",{ascending:false}).limit(300);
+  if(hq.error || token !== scRotToken) return;
+  const hist = hq.data||[];
+  const dates = [...new Set(hist.map(x=> x.lesson_date))];
+  const warns = [];
+  studs.forEach(s=>{
+    const cur = scWeekAsg.find(x=> x.group_id===g.id && x.lesson_date===dISO && x.student_id===s.id);
+    if(!cur || !cur.horse_id) return;
+    let count = 1;
+    for(const d of dates){
+      const a = hist.find(x=> x.lesson_date===d && x.student_id===s.id);
+      if(a && a.horse_id === cur.horse_id) count++;
+      else break;
+    }
+    if(count >= (g.horse_rotation||1)){
+      const hn = ((scData.horses.find(h=> h.id===cur.horse_id)||{}).name)||"?";
+      warns.push(`${s.name} har nu ridit ${hn} ${count} gånger i rad — dags att byta häst`);
+    }
+  });
+  if(token !== scRotToken) return;
+  const hostNow = el("scsRotWarn"); if(!hostNow) return;
+  hostNow.innerHTML = warns.map(w=> `<div class="msg warn" style="margin-top:8px;margin-bottom:0">🔄 ${esc(w)}</div>`).join("");
 }
 
 /* ============ Start ============ */
