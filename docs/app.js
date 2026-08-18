@@ -198,15 +198,29 @@ async function renderHome(){
     <div class="card">
       <h1 class="title">Hej!</h1>
       <p class="sub" style="margin:0 0 14px">Inloggad som ${esc(session.email)}</p>
+      <div id="homeInvites"></div>
       <p class="sub">Dina stall</p>
       <div id="stableList" class="list"><div class="empty">Laddar…</div></div>
     </div>`;
 
   try{
-    const all = await loadMyStables();
+    const [all, ivq] = await Promise.all([
+      loadMyStables(),
+      db.from("invite").select("id,invited_by,kind,staff_perm,invite_name,stable(name),profile(name)").eq("email", session.email).eq("status","pending")
+    ]);
+    const invs = ivq.error ? [] : (ivq.data||[]);
+    if(invs.length){
+      el("homeInvites").innerHTML = `<p class="sub">Inbjudningar</p>` + invs.map(v=>`
+        <div class="notif" style="margin-bottom:10px"><div>📩 <b>${esc(v.invited_by)}</b> har bjudit in dig till stallet <b>${esc((v.stable&&v.stable.name)||"?")}</b></div>
+          <div class="meta2">Som ${esc(inviteRoleLabel(v))}</div>
+          <div class="notifbtns"><button class="btn primary sm" data-hiacc="${v.id}">Acceptera</button><button class="btn sm" data-hidec="${v.id}">Avböj</button></div>
+        </div>`).join("") + `<div style="height:8px"></div>`;
+      el("homeInvites").querySelectorAll("[data-hiacc]").forEach(b=> b.onclick = ()=>{ const id=b.getAttribute("data-hiacc"); resolveInvite(id, true, invs.find(v=> v.id===id)); });
+      el("homeInvites").querySelectorAll("[data-hidec]").forEach(b=> b.onclick = ()=> resolveInvite(b.getAttribute("data-hidec"), false));
+    }
     const units = all.filter(u=> u.id);
-    // Har man bara en del – gå direkt till schemat (en gång per inloggning)
-    if(units.length === 1 && !didAutoRoute && !all.some(u=> u.emptyOrg)){
+    // Har man bara en del – gå direkt till schemat (en gång per inloggning, men inte förbi väntande inbjudningar)
+    if(units.length === 1 && !didAutoRoute && !all.some(u=> u.emptyOrg) && !invs.length){
       didAutoRoute = true;
       weekStart2 = startOfWeek(new Date());
       view = { name: "schedule", stableId: units[0].id };
@@ -215,8 +229,11 @@ async function renderHome(){
     }
     const list = el("stableList");
     if(!all.length){
-      list.innerHTML = `<div class="empty" style="margin-bottom:12px">Du är inte med i något stall än — skapa ett, eller be en admin lägga in din mejl.</div>
-        <button class="btn primary block" id="firstStableBtn">${ic("plus")} Skapa ditt första stall</button>`;
+      list.innerHTML = invs.length
+        ? `<div class="empty" style="margin-bottom:12px">Acceptera en inbjudan ovan för att komma igång — eller skapa ett eget stall.</div>
+           <button class="btn block" id="firstStableBtn">${ic("plus")} Skapa eget stall</button>`
+        : `<div class="empty" style="margin-bottom:12px">Du är inte med i något stall än — skapa ett, eller be en admin lägga in din mejl.</div>
+           <button class="btn primary block" id="firstStableBtn">${ic("plus")} Skapa ditt första stall</button>`;
       el("firstStableBtn").onclick = createOrgDialog;
       return;
     }
