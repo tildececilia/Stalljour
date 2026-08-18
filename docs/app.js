@@ -262,12 +262,45 @@ async function renderHome(){
             <select id="nuk_${o.id}"><option value="stall">Jourschema</option><option value="ridskola">Ridskola</option></select>
             <input type="text" id="nun_${o.id}" placeholder="Namn, t.ex. Ridskolan">
             <button class="btn primary sm" data-mkunit="${o.id}">Skapa</button>
-          </div>` : ""}
+          </div>
+          <button class="row lvl1" data-admins="${o.id}">
+            <div class="grow"><div class="nm">${ic("users")} Administratörer</div><div class="meta">visa och hantera</div></div>
+            <span class="chev">›</span>
+          </button>
+          <div id="adm_${o.id}" style="display:none;margin-left:16px"></div>` : ""}
       </div>`).join("");
     list.querySelectorAll("[data-open]").forEach(b=> b.onclick = ()=>{ weekStart2 = startOfWeek(new Date()); view={name:"schedule",stableId:b.getAttribute("data-open")}; render(); });
     list.querySelectorAll("[data-newunit]").forEach(b=> b.onclick = ()=>{
       const f = el("nu_" + b.getAttribute("data-newunit"));
       f.style.display = f.style.display === "none" ? "" : "none";
+    });
+    list.querySelectorAll("[data-admins]").forEach(b=> b.onclick = async ()=>{
+      const oid = b.getAttribute("data-admins");
+      const box = el("adm_"+oid);
+      if(box.style.display !== "none"){ box.style.display = "none"; return; }
+      box.style.display = ""; box.innerHTML = `<div class="empty">Laddar…</div>`;
+      const [oq, aq] = await Promise.all([
+        db.from("org").select("owner_email").eq("id", oid).single(),
+        db.from("org_admin").select("email").eq("org_id", oid).order("email")
+      ]);
+      const owner = (oq.data && oq.data.owner_email) || null;
+      const admins = aq.error ? [] : (aq.data||[]);
+      const meOwner = owner === session.email;
+      box.innerHTML = admins.map(a=>{
+        const isOwner = a.email === owner;
+        const canRemove = !isOwner && (meOwner || a.email === session.email);
+        const lbl = a.email === session.email ? "Lämna" : "Ta bort";
+        return `<div class="scsrow"><span class="scsname" style="font-weight:500">${esc(a.email)}${isOwner?` <span class="tagpill">skapare</span>`:""}${a.email===session.email?` <span class="tagpill">du</span>`:""}</span>${canRemove?`<button class="btn sm" data-rmadm="${oid}|${encodeURIComponent(a.email)}">${lbl}</button>`:""}</div>`;
+      }).join("") + (owner ? "" : `<div class="meta2" style="margin-top:6px">Ingen ägare är satt för stallet än (kör db/agare-mejlbyte.sql).</div>`);
+      box.querySelectorAll("[data-rmadm]").forEach(x=> x.onclick = async ()=>{
+        const j = x.getAttribute("data-rmadm").indexOf("|");
+        const o2 = x.getAttribute("data-rmadm").slice(0, j), email = decodeURIComponent(x.getAttribute("data-rmadm").slice(j+1));
+        const self = email === session.email;
+        if(!(await confirmDialog(self ? "Vill du lämna som admin? Eventuella andra roller och profiler behåller du." : `Ta bort ${email} som admin? Eventuella andra roller och profiler påverkas inte.`, { title:"Admin", okText: self ? "Ja, lämna" : "Ja, ta bort" }))) return;
+        const r = await db.from("org_admin").delete().eq("org_id", o2).eq("email", email);
+        if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
+        renderHome();
+      });
     });
     list.querySelectorAll("[data-mkunit]").forEach(b=> b.onclick = async ()=>{
       const oid = b.getAttribute("data-mkunit");
@@ -1196,6 +1229,7 @@ function buildProfileMenu(){
     ${tree}
     <button class="menuitem" data-act="newstable">${ic("plus")} Nytt stall</button>
     <button class="menuitem" data-act="invite">${ic("mail")} Bjud in till stallet</button>
+    <button class="menuitem" data-act="chmail">${ic("pencil")} Byt mejladress</button>
     <button class="menuitem" data-act="logout">${ic("logout")} Logga ut</button>`;
   m.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=> profileAction(b.getAttribute("data-act")));
   m.querySelectorAll("[data-bookas]").forEach(b=> b.onclick = ()=>{
@@ -1244,6 +1278,7 @@ async function profileAction(act){
   if(act==="requests"){ gotoView("requests"); return; }
   if(act==="newstable"){ createOrgDialog(); return; }
   if(act==="invite"){ inviteDialog(); return; }
+  if(act==="chmail"){ changeEmailDialog(); return; }
   if(act==="logout"){
     if(!(await confirmDialog("Vill du logga ut? Du behöver en ny inloggningslänk via mejl för att logga in igen.", { title:"Logga ut", okText:"Ja, logga ut", primary:true }))) return;
     await db.auth.signOut(); view = { name:"home", stableId:null }; return;
@@ -1466,6 +1501,37 @@ async function resolveInvite(id, accept, inv){
   await refreshBellCount();
   if(el("bellMenu").classList.contains("open")) await openBellMenu();
   if(view.name === "home") render();   // stallistan kan ha ändrats
+}
+/* Byt mejladress: bekräftas via mejl till båda adresserna; vid första inloggningen
+   med nya adressen flyttar apply_email_change alla roller/profiler/medlemskap. */
+async function changeEmailDialog(){
+  closeProfileMenu();
+  if(!session) return;
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  ov.innerHTML = `<div class="modal"><h3>Byt mejladress</h3>
+    <p>Nuvarande adress: <b>${esc(session.email)}</b></p>
+    <div class="field"><label class="fld">Ny mejladress</label><input type="email" id="ce_mail" placeholder="ny@adress.se"></div>
+    <div id="ce_msg"></div>
+    <div class="modal-btns"><button class="btn" id="ce_cancel">Avbryt</button><button class="btn primary" id="ce_send">Byt adress</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#ce_cancel").onclick = ()=> ov.remove();
+  ov.querySelector("#ce_send").onclick = async ()=>{
+    const email = normEmail(el("ce_mail").value);
+    if(!email.includes("@")){ el("ce_msg").innerHTML = msg("Skriv en giltig mejladress.", "err"); return; }
+    if(email === session.email){ el("ce_msg").innerHTML = msg("Det är redan din adress.", "err"); return; }
+    const r1 = await db.rpc("request_email_change", { p_new: email });
+    if(r1.error){ el("ce_msg").innerHTML = msg("Kunde inte förbereda bytet: " + r1.error.message + " (har db/agare-mejlbyte.sql körts?)", "err"); return; }
+    const r2 = await db.auth.updateUser({ email });
+    if(r2.error){ el("ce_msg").innerHTML = msg("Kunde inte starta bytet: " + r2.error.message, "err"); return; }
+    ov.remove();
+    infoDialog("Bekräftelsemejl har skickats till både din nuvarande och din nya adress — klicka på länken i båda. När du sedan loggar in med nya adressen flyttas alla dina roller, profiler och stall över automatiskt.", "Nästan klart");
+  };
+}
+async function applyEmailChange(){
+  try{
+    const r = await db.rpc("apply_email_change");
+    if(!r.error && r.data === true){ await refreshMyProfiles(); await refreshBellCount(); render(); }
+  }catch(e){}
 }
 function inviteRoleLabel(v){
   if(v.kind === "admin") return "admin";
@@ -3244,5 +3310,5 @@ async function loadRotationHints(g, dISO){
 
 /* ============ Start ============ */
 function setSessionFrom(s){ session = s ? { id: s.user.id, email: normEmail(s.user.email) } : null; }
-db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session){ refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
-db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session){ refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
+db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session){ applyEmailChange(); refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
+db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session){ applyEmailChange(); refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
