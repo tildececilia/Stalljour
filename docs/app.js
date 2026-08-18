@@ -1468,19 +1468,28 @@ async function inviteDialog(){
     <div class="field"><label class="fld">Stall</label><select id="iv_stable">${stO}</select></div>
     <div class="field"><label class="fld">Namn</label><input type="text" id="iv_name" placeholder="Personens namn" maxlength="60"></div>
     <div class="field"><label class="fld">Mejladress</label><input type="email" id="iv_mail" placeholder="namn@exempel.se"></div>
-    <div class="field"><label class="fld">Roll</label><select id="iv_role"></select></div>
+    <div class="field"><label class="fld">Roll</label><select id="iv_role"></select>
+      <div id="iv_roledesc" class="roledesc"></div></div>
     <div id="iv_hint"></div>
     <div id="iv_msg"></div>
     <div class="modal-btns"><button class="btn" id="iv_cancel">Avbryt</button><button class="btn primary" id="iv_send">Skicka inbjudan</button></div></div>`;
   document.body.appendChild(ov);
+  const ROLE_DESC = {
+    "staff:none": "Ser scheman och inställningar, ändrar inget",
+    "staff:teacher": "Ändrar lektioner, elever och hästar",
+    "admin": "Full behörighet i stallet"
+  };
+  const showRoleDesc = ()=>{ const rd = ov.querySelector("#iv_roledesc"); if(rd) rd.textContent = ROLE_DESC[ov.querySelector("#iv_role").value] || ""; };
   const fillRoles = ()=>{
     const opt = ov.querySelector("#iv_stable option:checked");
     const kind = opt ? opt.getAttribute("data-kind") : "stall";
     ov.querySelector("#iv_role").innerHTML = kind === "ridskola"
-      ? `<option value="staff:none">Stallpersonal — ser allt, ändrar inget</option>
-         <option value="staff:teacher">Ridlärare — lektioner, elever och hästar</option>
-         <option value="admin">Admin — full behörighet</option>`
-      : `<option value="admin">Admin — full behörighet</option>`;
+      ? `<option value="staff:none">Stallpersonal</option>
+         <option value="staff:teacher">Ridlärare</option>
+         <option value="admin">Admin</option>`
+      : `<option value="admin">Admin</option>`;
+    showRoleDesc();
+    ov.querySelector("#iv_role").onchange = showRoleDesc;
     ov.querySelector("#iv_hint").innerHTML = kind === "ridskola"
       ? `<div class="meta2" style="margin:2px 0 10px">Letar du efter att lägga till <b>elever</b>? Det görs i inställningarna. <button class="btn sm" id="iv_open" style="margin-left:6px">Öppna inställningar</button></div>`
       : `<div class="meta2" style="margin:2px 0 10px">Medlemmar i jourstallet läggs till via en profil (Inställningar → profilen → + Mejl) — de får då en inbjudan automatiskt. <button class="btn sm" id="iv_open" style="margin-left:6px">Öppna inställningar</button></div>`;
@@ -1503,10 +1512,16 @@ async function inviteDialog(){
     const kind = roleV === "admin" ? "admin" : "staff";
     const staff_perm = kind === "staff" ? roleV.split(":")[1] : null;
     const r = await db.from("invite").insert({ stable_id: sid, email, invited_by: session.email, kind, staff_perm, invite_name: name || null });
+    let resent = false;
     if(r.error){
       const dup = (r.error.code === "23505") || /duplicate/i.test(r.error.message||"");
-      el("iv_msg").innerHTML = msg(dup ? "Personen har redan en inbjudan med den rollen i det stallet." : "Kunde inte skapa inbjudan: " + r.error.message, "err");
-      return;
+      if(!dup){ el("iv_msg").innerHTML = msg("Kunde inte skapa inbjudan: " + r.error.message, "err"); return; }
+      // fanns redan en inbjudan → gör om den till väntande och skicka om mejlet
+      const u = await db.from("invite")
+        .update({ status:"pending", invited_by: session.email, staff_perm, invite_name: name || null, responded_at: null })
+        .eq("stable_id", sid).eq("email", email).eq("kind", kind).is("profile_id", null);
+      if(u.error){ el("iv_msg").innerHTML = msg("Kunde inte skicka om inbjudan: " + u.error.message, "err"); return; }
+      resent = true;
     }
     // skicka inloggningsmejl — länken loggar in personen, inbjudan väntar sedan i notisklockan
     let mailNote = "";
@@ -1516,7 +1531,8 @@ async function inviteDialog(){
       if(m.error) mailNote = " Obs: mejlet kunde inte skickas (" + m.error.message + ") — be personen logga in själv på appen.";
     }catch(e){ mailNote = " Obs: mejlet kunde inte skickas — be personen logga in själv på appen."; }
     ov.remove();
-    infoDialog("Inbjudan till " + email + " är skickad! Personen får ett mejl med inloggningslänk och svarar sedan på inbjudan i notisklockan." + mailNote, "Inbjudan skickad");
+    infoDialog((resent ? "Inbjudan till " + email + " är skickad om! " : "Inbjudan till " + email + " är skickad! ")
+      + "Personen får ett mejl med inloggningslänk och svarar sedan på inbjudan i notisklockan." + mailNote, resent ? "Inbjudan omskickad" : "Inbjudan skickad");
   };
 }
 async function resolveRequest(id, accept){
@@ -2039,6 +2055,7 @@ let scOpen = {};
 let scData = null;
 let scStableId = null;
 const RS_WD = [null,"Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"];
+const PERM_DESC = { none:"Ser scheman och inställningar, ändrar inget", teacher:"Ändrar lektioner, elever och hästar", chef:"Ändrar arbetspass och bemanning" };
 const RS_DUR = [30,45,60,75,90,120];
 const TASK_DUR = [15,30,45,60,90,120,180,240];
 
@@ -2338,12 +2355,13 @@ function renderSchoolTree(){
       const cat = f.rs_staff_category && f.rs_staff_category.name;
       if(can && scOpen["edit_f_"+f.id]){
         const scO = `<option value="">Ingen kategori</option>` + (scData.staffCats||[]).map(c=>`<option value="${c.id}"${c.id===f.category_id?" selected":""}>${esc(c.name)}</option>`).join("");
-        const pO = [["none","Stallpersonal — ser allt, ändrar inget"],["teacher","Ridlärare — ändrar lektioner, elever och hästar"],["chef","Chef — ändrar arbetspass och bemanning"]]
+        const pO = [["none","Stallpersonal"],["teacher","Ridlärare"],["chef","Chef"]]
           .map(([v,l])=>`<option value="${v}"${(f.perm||"none")===v?" selected":""}>${l}</option>`).join("");
         t.push(`<div class="editrow lvl1">
           <div class="field"><label class="fld">Namn</label><input type="text" id="scf_name_${f.id}" value="${esc(f.name)}"></div>
           <div class="field"><label class="fld">Kategori</label><select id="scf_cat_${f.id}">${scO}</select></div>
-          <div class="field"><label class="fld">Behörighet</label><select id="scf_perm_${f.id}">${pO}</select></div>
+          <div class="field"><label class="fld">Behörighet</label><select id="scf_perm_${f.id}" data-permdesc="scf_permdesc_${f.id}">${pO}</select>
+            <div id="scf_permdesc_${f.id}" class="roledesc">${PERM_DESC[f.perm||"none"]}</div></div>
           ${scDescField("f_"+f.id, f.description)}
           <div class="editbtns"><button class="btn primary sm" data-scs="staff:${f.id}">Spara</button><button class="btn sm" data-scc="f_${f.id}">Avbryt</button></div>
         </div>`);
@@ -2576,6 +2594,9 @@ function renderSchoolTree(){
   host.querySelectorAll("[data-scc]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const k=b.getAttribute("data-scc"); delete scOpen["edit_"+k]; delete scOpen["desc_"+k]; renderSchoolTree(); });
   host.querySelectorAll("[data-scadd]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen["add_"+b.getAttribute("data-scadd")] = true; renderSchoolTree(); });
   host.querySelectorAll("[data-scshow]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); scOpen[b.getAttribute("data-scshow")] = true; renderSchoolTree(); });
+  host.querySelectorAll("[data-permdesc]").forEach(sel=> sel.onchange = ()=>{
+    const d = el(sel.getAttribute("data-permdesc")); if(d) d.textContent = PERM_DESC[sel.value] || "";
+  });
   host.querySelectorAll(".catpick").forEach(sel=> sel.onchange = ()=>{
     const tid = sel.getAttribute("data-catfor");
     const list = (scPickMap[tid]||{})[sel.value] || [];
