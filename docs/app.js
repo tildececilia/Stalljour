@@ -418,10 +418,40 @@ async function renderStable(stableId){
 }
 
 let curPerm = "member";   // roll i ridskolan som visas: admin | teacher | chef | member
+let permView = null;      // admins "Visa som"-förhandsgranskning: teacher | chef | member | null
 async function mySchoolPerm(stableId){
   const r = await db.rpc("my_school_perm", { sid: stableId });
-  if(!r.error && r.data) return r.data;
-  return (await amIAdmin(stableId)) ? "admin" : "member";   // fallback om db/behorigheter.sql inte körts
+  const real = (!r.error && r.data) ? r.data : ((await amIAdmin(stableId)) ? "admin" : "member");
+  if(permView && real === "admin") return permView;   // förhandsgranska en annan roll
+  return real;
+}
+function renderViewAsBar(){
+  let bar = el("viewAsBar");
+  if(!permView){ if(bar) bar.remove(); return; }
+  const lbl = { teacher:"ridlärare", chef:"chef", member:"stallpersonal/medlem" }[permView] || permView;
+  if(!bar){
+    bar = document.createElement("div"); bar.id = "viewAsBar";
+    bar.style.cssText = "position:sticky;top:0;z-index:20;background:var(--danger);color:#fff;text-align:center;padding:7px 12px;font-size:.85rem;font-weight:600;cursor:pointer";
+    document.querySelector("header.app").after(bar);
+  }
+  bar.textContent = "👁 Visar appen som " + lbl + " — klicka här för att återgå till admin";
+  bar.onclick = ()=>{ permView = null; renderViewAsBar(); render(); };
+}
+async function viewAsDialog(){
+  closeProfileMenu();
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  const opt = (v,l)=> `<button class="btn block${(permView||"admin")===v?" primary":""}" data-va="${v}" style="margin-top:8px">${l}</button>`;
+  ov.innerHTML = `<div class="modal"><h3>Visa som</h3>
+    <p>Förhandsgranska hur appen ser ut för en annan roll. Du är fortfarande inloggad som dig själv.</p>
+    ${opt("admin","Admin (min vanliga vy)")}${opt("teacher","Ridlärare")}${opt("chef","Chef")}${opt("member","Stallpersonal / medlem")}
+    <div class="modal-btns" style="margin-top:14px"><button class="btn" id="vaClose">Stäng</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#vaClose").onclick = ()=> ov.remove();
+  ov.querySelectorAll("[data-va]").forEach(b=> b.onclick = ()=>{
+    const v = b.getAttribute("data-va");
+    permView = v === "admin" ? null : v;
+    ov.remove(); renderViewAsBar(); render();
+  });
 }
 async function amIAdmin(stableId){
   const r = await db.rpc("am_i_admin", { sid: stableId });
@@ -843,6 +873,7 @@ async function doAdd(spec){
     if(!r.error && email !== session.email){
       // skapa inbjudan — syns i personens notisklocka när hen loggar in (fel ignoreras, t.ex. dubblett)
       await db.from("invite").insert({ stable_id: stStableId, profile_id: b, email, invited_by: session.email });
+      sendWelcomeMail(email);
     } }
   if(kind==="horse"){ const name=(el("in_horse_"+a+"_"+b).value||"").trim(); const gid=el("in_horsegrp_"+a+"_"+b).value||null;
     if(!name){ await infoDialog("Skriv hästens namn i fältet först, välj grupp och tryck sedan på + Lägg till häst.", "Namn saknas"); return; }
@@ -1230,6 +1261,7 @@ function buildProfileMenu(){
     <button class="menuitem" data-act="newstable">${ic("plus")} Nytt stall</button>
     <button class="menuitem" data-act="invite">${ic("mail")} Bjud in till stallet</button>
     <button class="menuitem" data-act="chmail">${ic("pencil")} Byt mejladress</button>
+    <button class="menuitem" data-act="viewas">${ic("user")} Visa som …</button>
     <button class="menuitem" data-act="logout">${ic("logout")} Logga ut</button>`;
   m.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=> profileAction(b.getAttribute("data-act")));
   m.querySelectorAll("[data-bookas]").forEach(b=> b.onclick = ()=>{
@@ -1279,6 +1311,7 @@ async function profileAction(act){
   if(act==="newstable"){ createOrgDialog(); return; }
   if(act==="invite"){ inviteDialog(); return; }
   if(act==="chmail"){ changeEmailDialog(); return; }
+  if(act==="viewas"){ viewAsDialog(); return; }
   if(act==="logout"){
     if(!(await confirmDialog("Vill du logga ut? Du behöver en ny inloggningslänk via mejl för att logga in igen.", { title:"Logga ut", okText:"Ja, logga ut", primary:true }))) return;
     await db.auth.signOut(); view = { name:"home", stableId:null }; return;
@@ -1410,6 +1443,8 @@ async function refreshBellCount(){
   let n = r.error ? 0 : (r.data||[]).filter(bellRelevant).length;
   const iv = await db.from("invite").select("id").eq("email", session.email).eq("status","pending");
   if(!iv.error) n += (iv.data||[]).length;
+  const tn = await db.from("task_notice").select("id").eq("email", session.email).eq("seen", false);
+  if(!tn.error) n += (tn.data||[]).length;
   try{ dueReminders = await getDueReminders(); n += dueReminders.length; }catch(e){}
   if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
 }
@@ -1429,8 +1464,19 @@ async function openBellMenu(){
   try{ rems = await getDueReminders(); }catch(e){}
   const iq = await db.from("invite").select("id,invited_by,kind,staff_perm,invite_name,stable(name),profile(name)").eq("email", session.email).eq("status","pending");
   const invs = iq.error ? [] : (iq.data||[]);
-  if(!mine.length && !rems.length && !invs.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
-  const invHtml = invs.map(v=>
+  const tq = await db.from("task_notice").select("id,kind,task_name,stable(name)").eq("email", session.email).eq("seen", false).order("created_at",{ascending:false});
+  const tns = tq.error ? [] : (tq.data||[]);
+  if(!mine.length && !rems.length && !invs.length && !tns.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const tnHtml = tns.map(v=>{
+    const pfx = v.kind === "added" ? "🕐 Du har satts på arbetspasset"
+      : v.kind === "removed" ? "🕐 Du har tagits bort från arbetspasset"
+      : v.kind === "sick" ? "🤒 Sjukanmälan:"
+      : v.kind === "sick_removed" ? "🙂 Sjukanmälan borttagen:" : "🕐";
+    return `<div class="notif"><div>${pfx} <b>${esc(v.task_name)}</b></div>
+      <div class="meta2">${esc((v.stable&&v.stable.name)||"")}</div>
+      <div class="notifbtns"><button class="btn sm" data-tnok="${v.id}">Ok</button></div></div>`;
+  }).join("");
+  const invHtml = tnHtml + invs.map(v=>
     `<div class="notif"><div>📩 <b>${esc(v.invited_by)}</b> har bjudit in dig till stallet <b>${esc((v.stable&&v.stable.name)||"?")}</b></div>
       <div class="meta2">Som ${esc(inviteRoleLabel(v))}</div>
       <div class="notifbtns"><button class="btn primary sm" data-invacc="${v.id}">Acceptera</button><button class="btn sm" data-invdec="${v.id}">Avböj</button></div></div>`).join("");
@@ -1475,6 +1521,12 @@ async function openBellMenu(){
   });
   m.querySelectorAll("[data-invacc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); const id=b.getAttribute("data-invacc"); resolveInvite(id, true, invs.find(v=> v.id===id)); });
   m.querySelectorAll("[data-invdec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveInvite(b.getAttribute("data-invdec"), false); });
+  m.querySelectorAll("[data-tnok]").forEach(b=> b.onclick = async (e)=>{
+    e.stopPropagation();
+    await db.from("task_notice").update({ seen: true }).eq("id", b.getAttribute("data-tnok"));
+    await refreshBellCount();
+    openBellMenu();
+  });
 }
 function namePromptDialog(){
   return new Promise(res=>{
@@ -1712,11 +1764,12 @@ async function sendPassRequest(type, bookingId, fromP, toP, label){
 document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
 
 /* ============ Mina pass ============ */
-/* Mina lektioner (ridskola): kommande fyra veckor för mina elever + lektioner jag jobbar/leder på */
+/* Mina lektioner / Mina arbetspass (ridskola): kommande fyra veckor */
+let mlTab = null;   // "lek" | "pass" — väljs automatiskt första gången
 async function renderMyLessons(stableId){
   try{
     const st = await db.from("stable").select("*").eq("id", stableId).single(); if(st.error) throw st.error;
-    const [g,s,h,gs,sf,gf,ins,gi] = await Promise.all([
+    const [g,s,h,gs,sf,gf,ins,gi,tk,tf] = await Promise.all([
       db.from("rs_group").select("*, category(name)").eq("stable_id", stableId).order("weekday").order("start_time"),
       db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", stableId).order("name"),
       db.from("rs_horse").select("id,name").eq("stable_id", stableId),
@@ -1724,12 +1777,15 @@ async function renderMyLessons(stableId){
       db.from("rs_staff").select("id,name,rs_staff_member(email)").eq("stable_id", stableId),
       db.from("rs_group_staff").select("*"),
       db.from("rs_instructor").select("id,name,rs_instructor_member(email)").eq("stable_id", stableId),
-      db.from("rs_group_instructor").select("*")
+      db.from("rs_group_instructor").select("*"),
+      db.from("rs_task").select("*").eq("stable_id", stableId).order("start_time"),
+      db.from("rs_task_staff").select("*")
     ]);
     if(g.error) throw g.error;
     const groups = g.data||[], students = s.error?[]:s.data, horses = h.error?[]:h.data;
     const gstud = gs.error?[]:gs.data, staff = sf.error?[]:sf.data, gstaff = gf.error?[]:gf.data;
     const instrs = ins.error?[]:ins.data, ginstr = gi.error?[]:gi.data;
+    const tasks = tk.error?[]:tk.data, taskStaff = tf.error?[]:tf.data;
     const myStud = new Set(students.filter(x=> (x.rs_student_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(x=> x.id));
     const myStaff = new Set(staff.filter(x=> (x.rs_staff_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(x=> x.id));
     const myInstr = new Set(instrs.filter(x=> (x.rs_instructor_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(x=> x.id));
@@ -1737,11 +1793,12 @@ async function renderMyLessons(stableId){
       gstud.some(x=> x.group_id===gr.id && myStud.has(x.student_id)) ||
       gstaff.some(x=> x.group_id===gr.id && myStaff.has(x.staff_id)) ||
       ginstr.some(x=> x.group_id===gr.id && myInstr.has(x.instructor_id)));
+    const relTasks = tasks.filter(t2=> taskStaff.some(x=> x.task_id===t2.id && myStaff.has(x.staff_id)));
     const today = new Date(); today.setHours(0,0,0,0);
     const tISO = isoDate(today);
     const endD = new Date(today); endD.setDate(endD.getDate()+27);
     const endISO = isoDate(endD);
-    let asg = [], abs = [], notes = [];
+    let asg = [], abs = [], notes = [], tAbs = [];
     if(rel.length){
       const ids = rel.map(x=> x.id);
       const [aq,bq,nq] = await Promise.all([
@@ -1751,14 +1808,40 @@ async function renderMyLessons(stableId){
       ]);
       asg = aq.error?[]:aq.data; abs = bq.error?[]:bq.data; notes = nq.error?[]:nq.data;
     }
+    if(relTasks.length){
+      const tq = await db.from("rs_task_absence").select("*").in("task_id", relTasks.map(x=> x.id)).gte("work_date", tISO).lte("work_date", endISO);
+      tAbs = tq.error?[]:tq.data;
+    }
+    if(mlTab === null) mlTab = (!rel.length && relTasks.length) ? "pass" : "lek";
     let html = "";
     for(let i=0;i<28;i++){
       const d = new Date(today); d.setDate(d.getDate()+i);
       const wd = ((d.getDay()+6)%7)+1;
-      const dayRel = rel.filter(gr=> gr.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b));
-      if(!dayRel.length) continue;
+      const dayRel = mlTab === "lek" ? rel.filter(gr=> gr.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b)) : [];
+      const dayTasks = mlTab === "pass" ? relTasks.filter(t2=> t2.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b)) : [];
+      if(!dayRel.length && !dayTasks.length) continue;
       const dISO = isoDate(d);
       html += `<div class="sublabel" style="margin-top:16px">${RS_WD[wd]} ${d.getDate()}/${d.getMonth()+1}${dISO===tISO?' · <span style="color:var(--accent)">idag</span>':""}</div>`;
+      dayTasks.forEach(t2=>{
+        const myOn = taskStaff.filter(x=> x.task_id===t2.id && myStaff.has(x.staff_id));
+        const trows = myOn.map(x=>{
+          const f = staff.find(y=> y.id===x.staff_id); if(!f) return "";
+          const sick = tAbs.some(y=> y.task_id===t2.id && y.work_date===dISO && y.staff_id===f.id);
+          const sickBit = sick
+            ? `<span class="tagpill st-no" data-mltunsick="${t2.id}|${dISO}|${f.id}" style="cursor:pointer" title="Ta bort sjukanmälan">sjuk</span>`
+            : `<button class="btn sm" data-mltsick="${t2.id}|${dISO}|${f.id}">Sjukanmäl</button>`;
+          return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(f.name)}</span>${sickBit}</div>`;
+        }).join("");
+        html += `<div class="card taskcard">
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+            <b>${esc(t2.name)}</b>
+            <span class="meta2">${t2.start_time}–${rsEndTime(t2.start_time, t2.duration_min)}</span>
+            <span class="tagpill">arbetspass</span>
+          </div>
+          ${t2.description?`<div class="meta2" style="margin-top:4px">${esc(t2.description)}</div>`:""}
+          <div style="margin-top:8px">${trows}</div>
+        </div>`;
+      });
       dayRel.forEach(gr=>{
         const note = notes.find(x=> x.group_id===gr.id && x.lesson_date===dISO);
         const roles = [];
@@ -1787,8 +1870,14 @@ async function renderMyLessons(stableId){
       });
     }
     el("mineShell").innerHTML = `
-      <div class="card schedtop"><div class="schedeyebrow">Mina lektioner</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
-      ${html || `<div class="card"><div class="empty">Inga kommande lektioner för dig de närmaste fyra veckorna.</div></div>`}`;
+      <div class="card schedtop"><div class="schedeyebrow">${mlTab==="pass"?"Mina arbetspass":"Mina lektioner"}</div><h1 class="schedname">${esc(st.data.name)}</h1>
+        <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap">
+          <button class="btn sm${mlTab==="lek"?" primary":""}" id="mlTabLek">Mina lektioner</button>
+          <button class="btn sm${mlTab==="pass"?" primary":""}" id="mlTabPass">Mina arbetspass</button>
+        </div></div>
+      ${html || `<div class="card"><div class="empty">${mlTab==="pass"?"Inga kommande arbetspass för dig de närmaste fyra veckorna.":"Inga kommande lektioner för dig de närmaste fyra veckorna."}</div></div>`}`;
+    el("mlTabLek").onclick = ()=>{ if(mlTab!=="lek"){ mlTab = "lek"; renderMyLessons(stableId); } };
+    el("mlTabPass").onclick = ()=>{ if(mlTab!=="pass"){ mlTab = "pass"; renderMyLessons(stableId); } };
     document.querySelectorAll("[data-mlsick]").forEach(b=> b.onclick = async ()=>{
       const [gid, dI, sid] = b.getAttribute("data-mlsick").split("|");
       const stu = students.find(x=> x.id === sid);
@@ -1802,6 +1891,20 @@ async function renderMyLessons(stableId){
       const [gid, dI, sid] = b.getAttribute("data-mlunsick").split("|");
       if(!(await confirmDialog("Ta bort sjukanmälan?", { okText:"Ja, ta bort" }))) return;
       await db.from("rs_absence").delete().eq("group_id",gid).eq("lesson_date",dI).eq("student_id",sid);
+      renderMyLessons(stableId);
+    });
+    document.querySelectorAll("[data-mltsick]").forEach(b=> b.onclick = async ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-mltsick").split("|");
+      const dd = new Date(dI+"T00:00:00");
+      if(!(await confirmDialog(`Sjukanmäla dig från passet ${RS_WD[((dd.getDay()+6)%7)+1].toLowerCase()} ${dd.getDate()}/${dd.getMonth()+1}?`, { title:"Sjukanmälan", okText:"Ja, sjukanmäl", primary:true }))) return;
+      const r = await db.from("rs_task_absence").insert({ task_id: tid, work_date: dI, staff_id: fid });
+      if(r.error){ alert("Kunde inte sjukanmäla: " + r.error.message); return; }
+      renderMyLessons(stableId);
+    });
+    document.querySelectorAll("[data-mltunsick]").forEach(b=> b.onclick = async ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-mltunsick").split("|");
+      if(!(await confirmDialog("Ta bort sjukanmälan?", { okText:"Ja, ta bort" }))) return;
+      await db.from("rs_task_absence").delete().eq("task_id",tid).eq("work_date",dI).eq("staff_id",fid);
       renderMyLessons(stableId);
     });
   }catch(e){ el("mineShell").innerHTML = msg("Kunde inte hämta lektioner: " + (e.message||e), "err"); }
@@ -2145,6 +2248,52 @@ const TASK_DUR = [15,30,45,60,90,120,180,240];
 function rsMyStudentIds(){
   return new Set((scData.students||[]).filter(s=> (s.rs_student_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(s=> s.id));
 }
+function rsMyStaffIds(){
+  return new Set((scData.staff||[]).filter(f=> (f.rs_staff_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(f=> f.id));
+}
+function rsMyInstrIds(){
+  return new Set((scData.instructors||[]).filter(i=> (i.rs_instructor_member||[]).some(m=> (m.email||"").toLowerCase() === session.email)).map(i=> i.id));
+}
+function scMineLesson(g){
+  const ms = rsMyStudentIds(), mf = rsMyStaffIds(), mi = rsMyInstrIds();
+  return (scData.gstud||[]).some(x=> x.group_id===g.id && ms.has(x.student_id))
+      || (scData.gstaff||[]).some(x=> x.group_id===g.id && mf.has(x.staff_id))
+      || (scData.ginstr||[]).some(x=> x.group_id===g.id && mi.has(x.instructor_id));
+}
+function scMineTask(t){
+  const mf = rsMyStaffIds();
+  return (scData.taskStaff||[]).some(x=> x.task_id===t.id && mf.has(x.staff_id));
+}
+/* Arbetstidsvarningar för ett arbetspass: för långt pass, dubbelbokning och dygnsvila under 11 h */
+function taskWorkWarnings(tk){
+  const warns = [];
+  if((tk.duration_min||0) > 600) warns.push(`Passet är ${(tk.duration_min/60).toFixed(1).replace(".0","")} timmar långt — över 10 timmar`);
+  const staffIds = (scData.taskStaff||[]).filter(x=> x.task_id === tk.id).map(x=> x.staff_id);
+  staffIds.forEach(fid=>{
+    const f = (scData.staff||[]).find(x=> x.id === fid); if(!f) return;
+    const mine = (scData.taskStaff||[]).filter(x=> x.staff_id === fid)
+      .map(x=> (scData.tasks||[]).find(t2=> t2.id === x.task_id)).filter(Boolean);
+    mine.forEach(o=>{
+      if(o.id === tk.id) return;
+      const s1 = timeKey(tk), e1 = s1 + (tk.duration_min||60);
+      const s2 = timeKey(o), e2 = s2 + (o.duration_min||60);
+      if(o.weekday === tk.weekday){
+        if(s1 < e2 && s2 < e1) warns.push(`${f.name} är dubbelbokad: ${o.name} (${o.start_time}–${rsEndTime(o.start_time,o.duration_min)}) samma dag`);
+        return;
+      }
+      // dygnsvila: passet dagen innan → detta pass (och tvärtom)
+      const dayDiff = (tk.weekday - o.weekday + 7) % 7;
+      if(dayDiff === 1){
+        const rest = 1440 - e2 + s1;
+        if(rest < 660) warns.push(`${f.name} får bara ${Math.floor(rest/60)} h ${rest%60 ? (rest%60)+" min " : ""}vila mellan ${o.name} (slut ${rsEndTime(o.start_time,o.duration_min)}) och det här passet — under 11 h dygnsvila`);
+      } else if(dayDiff === 6){
+        const rest = 1440 - e1 + s2;
+        if(rest < 660) warns.push(`${f.name} får bara ${Math.floor(rest/60)} h ${rest%60 ? (rest%60)+" min " : ""}vila mellan det här passet (slut ${rsEndTime(tk.start_time,tk.duration_min)}) och ${o.name} dagen efter — under 11 h dygnsvila`);
+      }
+    });
+  });
+  return [...new Set(warns)];
+}
 function rsEndTime(start, dur){
   const m = /^(\d{1,2}):(\d{2})/.exec(start||""); if(!m) return "";
   const t = (+m[1])*60 + (+m[2]) + (dur||0);
@@ -2317,8 +2466,9 @@ function renderSchoolTree(){
         gstf.forEach(f=> t.push(`<div class="tleaf lvl2">${ic("user")} ${esc(f.name)}${can?`<span class="tbtns"><button class="x" data-scd="gstaff:${g.id}|${f.id}" title="Ta bort från lektionen">${ic("x")}</button></span>`:""}</div>`));
         if(!gstf.length) t.push(`<div class="tleaf lvl2 tmuted">Ingen personal kopplad än</div>`);
         if(can){
-          const freeF = (scData.staff||[]).filter(f=> !gstf.some(x=> x.id === f.id));
-          if(freeF.length) t.push(scAddCtl("addsel_gstaff_"+g.id, "Lägg till personal",
+          // bara ridlärare kan läggas på lektioner — stallpersonal hör till arbetspassen
+          const freeF = (scData.staff||[]).filter(f=> f.perm === "teacher" && !gstf.some(x=> x.id === f.id));
+          if(freeF.length) t.push(scAddCtl("addsel_gstaff_"+g.id, "Lägg till ridlärare",
             scCatPick("scin_gstaff_"+g.id, freeF, scData.staffCats, `<button class="btn sm" data-sca="gstaff:${g.id}">Lägg till</button>`), 2));
         }
         // Elever
@@ -2490,7 +2640,7 @@ function renderSchoolTree(){
           t.push(`<div class="tleaf lvl2">${ic("calendar")} ${esc(g.name)}${can?`<span class="tbtns"><button class="x" data-scd="gstaff:${g.id}|${f.id}" title="Ta bort från lektionen">${ic("x")}</button></span>`:""}</div>`);
         });
         if(!fg.length) t.push(`<div class="tleaf lvl2 tmuted">Inga lektioner än</div>`);
-        if(can){
+        if(can && f.perm === "teacher"){
           const freeG = scData.groups.filter(g=> !fg.some(x=> x.group_id === g.id));
           if(freeG.length) t.push(scAddCtl("addsel_fgrp_"+f.id, "Lägg till på lektion",
             `<select id="scin_fgrp_${f.id}">${freeG.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select><button class="btn sm" data-sca="fgrp:${f.id}">Lägg till</button>`, 2));
@@ -2820,6 +2970,7 @@ async function scAdd(spec){
     if(email.includes("@")){
       const mr = await db.from("rs_student_member").insert({ student_id: ins.data.id, email });
       if(mr.error) alert("Eleven skapades, men mejlen kunde inte läggas till: " + mr.error.message);
+      else sendWelcomeMail(email);
     }
     if(gid){
       const gr = await db.from("rs_group_student").insert({ group_id: gid, student_id: ins.data.id });
@@ -2841,7 +2992,8 @@ async function scAdd(spec){
     r = await db.from("rs_group_student").insert({ group_id: gid, student_id: a }); }
   if(kind==="smail"){ const email = normEmail(el("scin_smail_"+a).value);
     if(!email.includes("@")){ await infoDialog("Skriv en giltig mejladress.", "Mejl saknas"); return; }
-    r = await db.from("rs_student_member").insert({ student_id: a, email }); }
+    r = await db.from("rs_student_member").insert({ student_id: a, email });
+    if(!r.error) sendWelcomeMail(email); }
   if(kind==="staff"){ const name=(el("scin_staff").value||"").trim();
     if(!name){ await infoDialog("Ge personen ett namn.", "Namn saknas"); return; }
     const email = normEmail(el("scin_sfmail").value);
@@ -2851,6 +3003,7 @@ async function scAdd(spec){
     if(email.includes("@")){
       const mr = await db.from("rs_staff_member").insert({ staff_id: ins.data.id, email });
       if(mr.error) alert("Personen skapades, men mejlen kunde inte läggas till: " + mr.error.message);
+      else sendWelcomeMail(email);
     }
     delete scOpen.add_staff;
     await reloadSchool(); return; }
@@ -2880,16 +3033,19 @@ async function scAdd(spec){
       sort_order: (scData.tasks||[]).length });
     if(!r.error) delete scOpen.add_task; }
   if(kind==="tstaff"){ const fid = el("scin_tstaff_"+a).value; if(!fid) return;
-    r = await db.from("rs_task_staff").insert({ task_id: a, staff_id: fid }); }
+    r = await db.from("rs_task_staff").insert({ task_id: a, staff_id: fid });
+    if(!r.error) sendTaskNotice(fid, (((scData.tasks||[]).find(t2=> t2.id===a))||{}).name || "arbetspass", "added"); }
   if(kind==="ftask"){ const tid = el("scin_ftask_"+a).value; if(!tid) return;
-    r = await db.from("rs_task_staff").insert({ task_id: tid, staff_id: a }); }
+    r = await db.from("rs_task_staff").insert({ task_id: tid, staff_id: a });
+    if(!r.error) sendTaskNotice(a, (((scData.tasks||[]).find(t2=> t2.id===tid))||{}).name || "arbetspass", "added"); }
   if(kind==="ginstr"){ const iid = el("scin_ginstr_"+a).value; if(!iid) return;
     r = await db.from("rs_group_instructor").insert({ group_id: a, instructor_id: iid }); }
   if(kind==="igrp"){ const gid = el("scin_igrp_"+a).value; if(!gid) return;
     r = await db.from("rs_group_instructor").insert({ group_id: gid, instructor_id: a }); }
   if(kind==="imail"){ const email = normEmail(el("scin_imail_"+a).value);
     if(!email.includes("@")){ await infoDialog("Skriv en giltig mejladress.", "Mejl saknas"); return; }
-    r = await db.from("rs_instructor_member").insert({ instructor_id: a, email }); }
+    r = await db.from("rs_instructor_member").insert({ instructor_id: a, email });
+    if(!r.error) sendWelcomeMail(email); }
   if(kind==="instr"){ const name=(el("scin_instr").value||"").trim();
     if(!name){ await infoDialog("Ge ledaren ett namn.", "Namn saknas"); return; }
     const email = normEmail(el("scin_instrmail").value);
@@ -2898,18 +3054,38 @@ async function scAdd(spec){
     if(email.includes("@")){
       const mr = await db.from("rs_instructor_member").insert({ instructor_id: ins.data.id, email });
       if(mr.error) alert("Ledaren skapades, men mejlen kunde inte läggas till: " + mr.error.message);
+      else sendWelcomeMail(email);
     }
     delete scOpen.add_instr;
     await reloadSchool(); return; }
   if(kind==="fmail"){ const email = normEmail(el("scin_fmail_"+a).value);
     if(!email.includes("@")){ await infoDialog("Skriv en giltig mejladress.", "Mejl saknas"); return; }
-    r = await db.from("rs_staff_member").insert({ staff_id: a, email }); }
+    r = await db.from("rs_staff_member").insert({ staff_id: a, email });
+    if(!r.error) sendWelcomeMail(email); }
   if(!r) return;
   if(r.error){ alert("Kunde inte lägga till: " + r.error.message); return; }
   delete scOpen["addsel_"+kind+"_"+(a||"")];   // fäll ihop lägg till-kontrollen igen
   await reloadSchool();
 }
 
+/* Välkomstmejl med inloggningslänk när någons mejladress läggs till (alla roller) */
+async function sendWelcomeMail(email){
+  try{
+    email = normEmail(email);
+    if(!email || !email.includes("@") || email === session.email) return;
+    const redirect = window.location.origin + window.location.pathname;
+    await db.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: redirect } });
+  }catch(e){}
+}
+/* Notis i klockan till personens mejl när hen sätts på eller tas bort från ett arbetspass */
+async function sendTaskNotice(staffId, taskName, kind){
+  try{
+    const f = (scData.staff||[]).find(x=> x.id === staffId);
+    const emails = ((f && f.rs_staff_member) || []).map(m=> (m.email||"").toLowerCase()).filter(e=> e && e !== session.email);
+    if(!emails.length) return;
+    await db.from("task_notice").insert(emails.map(e=> ({ stable_id: scStableId, email: e, kind, task_name: taskName })));
+  }catch(e){}
+}
 async function scDelete(spec){
   const i = spec.indexOf(":"); const kind = spec.slice(0,i); const id = spec.slice(i+1);
   let q = null, text = "";
@@ -2944,7 +3120,9 @@ async function scDelete(spec){
   if(kind==="tstaff"){ const j=id.indexOf("|"); const tid=id.slice(0,j), fid=id.slice(j+1);
     const f=(scData.staff||[]).find(x=>x.id===fid); const tk=(scData.tasks||[]).find(x=>x.id===tid);
     text=`Ta bort ${f?f.name:"personen"} från arbetspasset "${tk?tk.name:""}"?`;
-    q=()=>db.from("rs_task_staff").delete().eq("task_id",tid).eq("staff_id",fid); }
+    q=async ()=>{ const rr = await db.from("rs_task_staff").delete().eq("task_id",tid).eq("staff_id",fid);
+      if(!rr.error) sendTaskNotice(fid, tk?tk.name:"arbetspass", "removed");
+      return rr; }; }
   if(kind==="instr"){ const i=(scData.instructors||[]).find(x=>x.id===id); text=`Du håller på att ta bort ledaren "${i?i.name:""}".`; q=()=>db.from("rs_instructor").delete().eq("id",id); }
   if(kind==="imail"){ const j=id.indexOf("|"); const iid=id.slice(0,j), em=decodeURIComponent(id.slice(j+1));
     text=`Ta bort mejladressen ${em}?`;
@@ -2962,8 +3140,12 @@ async function scDelete(spec){
 
 /* ---- Ridskolans schema: veckorutnät (dagar i x-led, tid i y-led) + detaljpanel ---- */
 let scSchedMode = "lessons";     // "lessons" | "tasks" — separata scheman för lektioner och arbetspass
+let scCalMode = "week";          // "day" | "week" | "month"
+let scDayOff = 0;                // vald dag i dagvyn (0=måndag)
+let scMonthDate = null;          // första dagen i månadsvyns månad
+let scOnlyMine = false;          // visa bara det som rör mig
 let scSel = null;                // valt block: {type:"les"|"task", id, wd}
-let scWeekAsg = [], scWeekAbs = [], scWeekNotes = [];   // veckans tilldelningar + sjukanmälningar + planeringar
+let scWeekAsg = [], scWeekAbs = [], scWeekNotes = [], scWeekTAbs = [];   // veckans tilldelningar + sjukanmälningar (lektion/arbetspass) + planeringar
 let scNoteOpen = false;               // planerings-textrutan utfälld i panelen?
 
 async function renderSchoolSchedule(stableId){
@@ -2977,10 +3159,10 @@ async function renderSchoolSchedule(stableId){
       db.from("rs_group").select("*, category(name)").eq("stable_id", stableId).order("weekday").order("start_time"),
       db.from("rs_student").select("id,name,rs_student_member(email)").eq("stable_id", stableId).order("name"),
       db.from("rs_horse").select("*").eq("stable_id", stableId).order("name"),
-      db.from("rs_instructor").select("id,name").eq("stable_id", stableId).order("name"),
+      db.from("rs_instructor").select("id,name,rs_instructor_member(email)").eq("stable_id", stableId).order("name"),
       db.from("rs_group_instructor").select("*"),
       db.from("rs_group_student").select("*"),
-      db.from("rs_staff").select("id,name").eq("stable_id", stableId).order("name"),
+      db.from("rs_staff").select("id,name,perm,rs_staff_member(email)").eq("stable_id", stableId).order("name"),
       db.from("rs_group_horse").select("*"),
       db.from("rs_group_staff").select("*"),
       db.from("rs_task").select("*").eq("stable_id", stableId).order("start_time"),
@@ -2995,6 +3177,12 @@ async function renderSchoolSchedule(stableId){
                tasks: tk.error?[]:tk.data, taskStaff: tf.error?[]:tf.data,
                places: pl.error?[]:pl.data };
     if(!weekStart2) weekStart2 = startOfWeek(new Date());
+    if(!scMonthDate){ const a = new Date(weekStart2); scMonthDate = new Date(a.getFullYear(), a.getMonth(), 1); }
+    const MFULL = ["januari","februari","mars","april","maj","juni","juli","augusti","september","oktober","november","december"];
+    let navLbl;
+    if(scCalMode === "day"){ const d = new Date(weekStart2); d.setDate(d.getDate()+scDayOff); navLbl = `${RS_WD[scDayOff+1]} ${d.getDate()}/${d.getMonth()+1}`; }
+    else if(scCalMode === "month"){ navLbl = MFULL[scMonthDate.getMonth()] + " " + scMonthDate.getFullYear(); }
+    else navLbl = "Vecka " + isoWeekNumber(weekStart2);
     el("scsShell").innerHTML = `
       <div class="card schedtop">
         <div class="schedeyebrow">Schema · Ridskola</div>
@@ -3002,31 +3190,63 @@ async function renderSchoolSchedule(stableId){
         <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
           <button class="btn sm${scSchedMode==="lessons"?" primary":""}" id="scmLes">Ridlektioner</button>
           <button class="btn sm${scSchedMode==="tasks"?" primary":""}" id="scmTask">Arbetspass</button>
+          <button class="btn sm${scOnlyMine?" primary":""}" id="scmMine" title="Visa bara det som rör dig">Bara mina</button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn sm${scCalMode==="day"?" primary":""}" id="scvDay">Dag</button>
+          <button class="btn sm${scCalMode==="week"?" primary":""}" id="scvWeek">Vecka</button>
+          <button class="btn sm${scCalMode==="month"?" primary":""}" id="scvMonth">Månad</button>
         </div>
         <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
           <button class="btn sm" id="scwPrev">‹ Förra</button>
-          <button class="btn sm" id="scwWeek">Vecka ${isoWeekNumber(weekStart2)}</button>
+          <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
           <button class="btn sm" id="scwNext">Nästa ›</button>
         </div>
       </div>
       <div class="card"><div class="scgw" id="scsGrid"></div></div>
       <div id="scsDetail"></div>`;
-    el("scwPrev").onclick = ()=>{ weekStart2=new Date(weekStart2); weekStart2.setDate(weekStart2.getDate()-7); renderSchoolSchedule(stableId); };
-    el("scwNext").onclick = ()=>{ weekStart2=new Date(weekStart2); weekStart2.setDate(weekStart2.getDate()+7); renderSchoolSchedule(stableId); };
-    el("scwWeek").onclick = ()=>{ weekStart2=startOfWeek(new Date()); renderSchoolSchedule(stableId); };
+    const shift = dir=>{
+      if(scCalMode === "day"){
+        let off = scDayOff + dir;
+        weekStart2 = new Date(weekStart2);
+        if(off < 0){ weekStart2.setDate(weekStart2.getDate()-7); off = 6; }
+        if(off > 6){ weekStart2.setDate(weekStart2.getDate()+7); off = 0; }
+        scDayOff = off;
+      } else if(scCalMode === "month"){
+        scMonthDate = new Date(scMonthDate.getFullYear(), scMonthDate.getMonth()+dir, 1);
+        weekStart2 = startOfWeek(scMonthDate);
+      } else {
+        weekStart2 = new Date(weekStart2); weekStart2.setDate(weekStart2.getDate()+dir*7);
+      }
+      const a = new Date(weekStart2); if(scCalMode!=="month") scMonthDate = new Date(a.getFullYear(), a.getMonth(), 1);
+      renderSchoolSchedule(stableId);
+    };
+    el("scwPrev").onclick = ()=> shift(-1);
+    el("scwNext").onclick = ()=> shift(1);
+    el("scwWeek").onclick = ()=>{
+      const now = new Date();
+      weekStart2 = startOfWeek(now); scDayOff = (now.getDay()+6)%7;
+      scMonthDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      renderSchoolSchedule(stableId);
+    };
     el("scmLes").onclick = ()=>{ if(scSchedMode!=="lessons"){ scSchedMode="lessons"; scSel=null; renderSchoolSchedule(stableId); } };
     el("scmTask").onclick = ()=>{ if(scSchedMode!=="tasks"){ scSchedMode="tasks"; scSel=null; renderSchoolSchedule(stableId); } };
+    el("scmMine").onclick = ()=>{ scOnlyMine = !scOnlyMine; scSel = null; renderSchoolSchedule(stableId); };
+    el("scvDay").onclick = ()=>{ if(scCalMode!=="day"){ scCalMode = "day"; renderSchoolSchedule(stableId); } };
+    el("scvWeek").onclick = ()=>{ if(scCalMode!=="week"){ scCalMode = "week"; renderSchoolSchedule(stableId); } };
+    el("scvMonth").onclick = ()=>{ if(scCalMode!=="month"){ scCalMode = "month"; const a=new Date(weekStart2); scMonthDate = new Date(a.getFullYear(), a.getMonth(), 1); renderSchoolSchedule(stableId); } };
     await drawSchoolWeek();
   }catch(e){ el("scsShell").innerHTML = msg("Kunde inte öppna schemat: " + (e.message||e) + " (har du kört db/ridskola.sql?)", "err"); }
 }
 
 async function drawSchoolWeek(){
   const host = el("scsGrid"); if(!host) return;
+  if(scCalMode === "month"){ drawSchoolMonth(); return; }
   const gids = scData.groups.map(g=> g.id);
   const startISO = isoDate(weekStart2);
   const endD = new Date(weekStart2); endD.setDate(endD.getDate()+6);
   const endISO = isoDate(endD);
-  scWeekAsg = []; scWeekAbs = []; scWeekNotes = [];
+  scWeekAsg = []; scWeekAbs = []; scWeekNotes = []; scWeekTAbs = [];
   if(gids.length && scSchedMode === "lessons"){
     const [aq, bq, nq] = await Promise.all([
       db.from("rs_assignment").select("*").in("group_id", gids).gte("lesson_date", startISO).lte("lesson_date", endISO),
@@ -3035,14 +3255,19 @@ async function drawSchoolWeek(){
     ]);
     scWeekAsg = aq.error?[]:aq.data; scWeekAbs = bq.error?[]:bq.data; scWeekNotes = nq.error?[]:nq.data;
   }
-  const items = scSchedMode === "lessons"
+  if(scSchedMode === "tasks" && (scData.tasks||[]).length){
+    const tq = await db.from("rs_task_absence").select("*").in("task_id", scData.tasks.map(t=> t.id)).gte("work_date", startISO).lte("work_date", endISO);
+    scWeekTAbs = tq.error?[]:tq.data;
+  }
+  let items = scSchedMode === "lessons"
     ? scData.groups.map(g=> ({ type:"les", o:g, wd:g.weekday, start:timeKey(g), dur:g.duration_min||60 }))
     : (scData.tasks||[]).map(t=> ({ type:"task", o:t, wd:t.weekday, start:timeKey(t), dur:t.duration_min||60 }));
+  if(scOnlyMine) items = items.filter(i=> i.type === "les" ? scMineLesson(i.o) : scMineTask(i.o));
   if(!items.length){
-    host.innerHTML = `<div class="empty">${scSchedMode==="lessons" ? "Inga lektioner än — skapa lektioner under Inställningar." : "Inga arbetspass än — skapa dem under Inställningar."}</div>`;
+    host.innerHTML = `<div class="empty">${scOnlyMine ? "Inget som rör dig här — klicka ur \"Bara mina\" för att se allt." : scSchedMode==="lessons" ? "Inga lektioner än — skapa lektioner under Inställningar." : "Inga arbetspass än — skapa dem under Inställningar."}</div>`;
     el("scsDetail").innerHTML = ""; return;
   }
-  const days = [1,2,3,4,5,6,7].filter(wd=> items.some(i=> i.wd === wd));
+  const days = scCalMode === "day" ? [scDayOff+1] : [1,2,3,4,5,6,7].filter(wd=> items.some(i=> i.wd === wd));
   const tmin = Math.floor(Math.min(...items.map(i=> i.start))/60)*60;
   const tmax = Math.ceil(Math.max(...items.map(i=> i.start+i.dur))/60)*60;
   const PX = 1.1;   // pixlar per minut
@@ -3081,7 +3306,7 @@ async function drawSchoolWeek(){
     cols += `<div class="day"><div class="dhead${dISO===tISO?" today":""}">${RS_WD[wd].slice(0,3)} ${d.getDate()}/${d.getMonth()+1}${printBtn}</div>
       <div class="dbody" style="height:${bodyH}px">${hl}${bl}</div></div>`;
   });
-  host.innerHTML = `<div class="scg">${cols}</div>`;
+  host.innerHTML = `<div class="scg${scCalMode==="day"?" dayview":""}">${cols}</div>`;
   host.querySelectorAll("[data-selblk]").forEach(n=> n.onclick = ()=>{
     const [tp, id, wd] = n.getAttribute("data-selblk").split("|");
     scSel = { type: tp, id, wd: parseInt(wd,10) };
@@ -3096,6 +3321,43 @@ async function drawSchoolWeek(){
     printSchoolDay(dISO, parseInt(wd,10));
   });
   drawScsDetail();
+}
+
+/* Månadsvy: kalenderöversikt med små chips per dag — klick öppnar dagvyn */
+function drawSchoolMonth(){
+  const host = el("scsGrid"); if(!host) return;
+  let items = scSchedMode === "lessons"
+    ? scData.groups.map(g=> ({ type:"les", o:g, wd:g.weekday, start:timeKey(g) }))
+    : (scData.tasks||[]).map(t=> ({ type:"task", o:t, wd:t.weekday, start:timeKey(t) }));
+  if(scOnlyMine) items = items.filter(i=> i.type === "les" ? scMineLesson(i.o) : scMineTask(i.o));
+  const first = new Date(scMonthDate.getFullYear(), scMonthDate.getMonth(), 1);
+  const startO = (first.getDay()+6)%7;
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth()+1, 0).getDate();
+  const weeks = Math.ceil((startO + daysInMonth) / 7);
+  const tISO = isoDate(new Date());
+  let cells = [1,2,3,4,5,6,7].map(wd=> `<div class="mhead">${RS_WD[wd].slice(0,3)}</div>`).join("");
+  for(let i=0; i<weeks*7; i++){
+    const d = new Date(first); d.setDate(1 - startO + i);
+    const inMonth = d.getMonth() === first.getMonth();
+    const wd = ((d.getDay()+6)%7)+1;
+    const dISO = isoDate(d);
+    const chips = inMonth ? items.filter(x=> x.wd === wd).sort((a,b)=> a.start-b.start).map(x=>{
+      const hu = x.type==="les" ? hashHue(String(x.o.id)) : null;
+      const st = x.type==="les" ? `background:hsla(${hu},45%,45%,.22)` : `background:var(--card-2);border:1px dashed var(--muted)`;
+      return `<div class="mchip" style="${st}">${x.o.start_time} ${esc(x.o.name)}</div>`;
+    }).join("") : "";
+    cells += `<div class="mcell${inMonth?"":" mout"}${dISO===tISO?" mtoday":""}" ${inMonth?`data-mday="${dISO}"`:""}>
+      <div class="mnum">${d.getDate()}</div>${chips}</div>`;
+  }
+  host.innerHTML = `<div class="mgrid">${cells}</div>`;
+  el("scsDetail").innerHTML = `<div class="card"><div class="empty">Klicka på en dag för att öppna dagvyn.</div></div>`;
+  host.querySelectorAll("[data-mday]").forEach(c=> c.onclick = ()=>{
+    const d = new Date(c.getAttribute("data-mday") + "T00:00:00");
+    weekStart2 = startOfWeek(d);
+    scDayOff = (d.getDay()+6)%7;
+    scCalMode = "day"; scSel = null;
+    renderSchoolSchedule(scStableId);
+  });
 }
 
 /* Skriv ut en dags lektioner (öppnar utskriftsdialogen — välj "Spara som PDF") */
@@ -3146,8 +3408,19 @@ function drawScsDetail(){
   const dateLbl = `${RS_WD[scSel.wd]} ${d.getDate()}/${d.getMonth()+1}`;
   if(scSel.type === "task"){
     const tk = (scData.tasks||[]).find(x=> x.id === scSel.id); if(!tk){ scSel=null; host.innerHTML=""; return; }
-    const staffNames = (scData.taskStaff||[]).filter(x=> x.task_id === tk.id)
-      .map(x=> ((scData.staff||[]).find(f=> f.id === x.staff_id)||{}).name).filter(Boolean);
+    const canT = curPerm === "admin" || curPerm === "chef";
+    const myStaff = rsMyStaffIds();
+    const tStaff = (scData.taskStaff||[]).filter(x=> x.task_id === tk.id)
+      .map(x=> (scData.staff||[]).find(f=> f.id === x.staff_id)).filter(Boolean);
+    const wWarns = taskWorkWarnings(tk);
+    const rows = tStaff.map(f=>{
+      const sick = scWeekTAbs.some(x=> x.task_id===tk.id && x.work_date===dISO && x.staff_id===f.id);
+      const mine = myStaff.has(f.id);
+      const sickBit = sick
+        ? `<span class="tagpill st-no" ${mine||canT?`data-tunsick="${tk.id}|${dISO}|${f.id}" style="cursor:pointer" title="Ta bort sjukanmälan"`:""}>sjuk</span>`
+        : ((mine || canT) && dISO >= tISO ? `<button class="btn sm" data-tsick="${tk.id}|${dISO}|${f.id}">Sjukanmäl</button>` : "");
+      return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(f.name)}${mine?` <span class="tagpill">du</span>`:""}</span>${sickBit}</div>`;
+    }).join("");
     host.innerHTML = `<div class="card">
       <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
         <b>${esc(tk.name)}</b>
@@ -3155,11 +3428,28 @@ function drawScsDetail(){
         <span class="tagpill">arbetspass</span>
       </div>
       ${tk.description?`<div class="meta2" style="margin-top:4px">${esc(tk.description)}</div>`:""}
+      ${wWarns.map(w=> `<div class="msg warn" style="margin-top:8px;margin-bottom:0">⚠ ${esc(w)}</div>`).join("")}
       <div style="margin-top:10px"><b style="font-size:.85rem">Personal</b>
-        ${staffNames.length ? staffNames.map(n=>`<div class="scsrow"><span class="scsname">${esc(n)}</span></div>`).join("")
-          : `<div class="msg warn" style="margin-top:6px">⚠ Ingen personal tilldelad än — lägg till under Inställningar → Arbetspass.</div>`}
+        ${rows || `<div class="msg warn" style="margin-top:6px">⚠ Ingen personal tilldelad än — lägg till under Inställningar → Arbetspass.</div>`}
       </div>
     </div>`;
+    host.querySelectorAll("[data-tsick]").forEach(b=> b.onclick = async ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-tsick").split("|");
+      const f = (scData.staff||[]).find(x=> x.id === fid);
+      const dd = new Date(dI+"T00:00:00");
+      if(!(await confirmDialog(`Sjukanmäla ${f?f.name:"personen"} från passet ${RS_WD[((dd.getDay()+6)%7)+1].toLowerCase()} ${dd.getDate()}/${dd.getMonth()+1}?`, { title:"Sjukanmälan", okText:"Ja, sjukanmäl", primary:true }))) return;
+      const r = await db.from("rs_task_absence").insert({ task_id: tid, work_date: dI, staff_id: fid });
+      if(r.error){ alert("Kunde inte sjukanmäla: " + r.error.message + " (har db/arbetspass2.sql körts?)"); return; }
+      scWeekTAbs.push({ task_id: tid, work_date: dI, staff_id: fid });
+      drawScsDetail();
+    });
+    host.querySelectorAll("[data-tunsick]").forEach(b=> b.onclick = async ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-tunsick").split("|");
+      if(!(await confirmDialog("Ta bort sjukanmälan?", { okText:"Ja, ta bort" }))) return;
+      await db.from("rs_task_absence").delete().eq("task_id",tid).eq("work_date",dI).eq("staff_id",fid);
+      scWeekTAbs = scWeekTAbs.filter(x=> !(x.task_id===tid && x.work_date===dI && x.staff_id===fid));
+      drawScsDetail();
+    });
     return;
   }
   const g = scData.groups.find(x=> x.id === scSel.id); if(!g){ scSel=null; host.innerHTML=""; return; }
