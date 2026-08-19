@@ -267,7 +267,12 @@ async function renderHome(){
             <div class="grow"><div class="nm">${ic("users")} Administratörer</div><div class="meta">visa och hantera</div></div>
             <span class="chev">›</span>
           </button>
-          <div id="adm_${o.id}" style="display:none;margin-left:16px"></div>` : ""}
+          <div id="adm_${o.id}" style="display:none;margin-left:16px"></div>
+          <button class="row lvl1" data-invlog="${o.id}">
+            <div class="grow"><div class="nm">${ic("mail")} Skickade inbjudningar</div><div class="meta">logg med status</div></div>
+            <span class="chev">›</span>
+          </button>
+          <div id="ivl_${o.id}" style="display:none;margin-left:16px"></div>` : ""}
       </div>`).join("");
     list.querySelectorAll("[data-open]").forEach(b=> b.onclick = ()=>{ weekStart2 = startOfWeek(new Date()); view={name:"schedule",stableId:b.getAttribute("data-open")}; render(); });
     list.querySelectorAll("[data-newunit]").forEach(b=> b.onclick = ()=>{
@@ -301,6 +306,26 @@ async function renderHome(){
         if(r.error){ alert("Kunde inte ta bort: " + r.error.message); return; }
         renderHome();
       });
+    });
+    list.querySelectorAll("[data-invlog]").forEach(b=> b.onclick = async ()=>{
+      const oid = b.getAttribute("data-invlog");
+      const box = el("ivl_"+oid);
+      if(box.style.display !== "none"){ box.style.display = "none"; return; }
+      box.style.display = ""; box.innerHTML = `<div class="empty">Laddar…</div>`;
+      const r = await db.from("invite").select("email,invite_name,kind,staff_perm,status,created_at,responded_at,invited_by,stable(name,org_id),profile(name)").order("created_at",{ascending:false});
+      const rows = (r.error?[]:(r.data||[])).filter(v=> v.stable && v.stable.org_id === oid);
+      if(!rows.length){ box.innerHTML = `<div class="empty">Inga inbjudningar skickade än.</div>`; return; }
+      box.innerHTML = rows.map(v=>{
+        const stTag = v.status === "pending" ? `<span class="tagpill st-pend">väntar</span>`
+                    : v.status === "accepted" ? `<span class="tagpill">accepterad</span>`
+                    : `<span class="tagpill st-no">avböjd</span>`;
+        const cd = v.created_at ? new Date(v.created_at) : null;
+        const rd = v.responded_at ? new Date(v.responded_at) : null;
+        return `<div class="scsrow" style="align-items:flex-start"><span class="scsname" style="font-weight:500">${esc(v.invite_name || v.email)}
+            <div class="meta2">${esc(v.email)} · ${esc(inviteRoleLabel(v))} · ${esc((v.stable&&v.stable.name)||"")}</div>
+            <div class="meta2">${cd?`Skickad ${cd.getDate()}/${cd.getMonth()+1}`:""}${rd?` · svarade ${rd.getDate()}/${rd.getMonth()+1}`:""}</div>
+          </span>${stTag}</div>`;
+      }).join("");
     });
     list.querySelectorAll("[data-mkunit]").forEach(b=> b.onclick = async ()=>{
       const oid = b.getAttribute("data-mkunit");
@@ -1471,7 +1496,9 @@ async function openBellMenu(){
     const pfx = v.kind === "added" ? "🕐 Du har satts på arbetspasset"
       : v.kind === "removed" ? "🕐 Du har tagits bort från arbetspasset"
       : v.kind === "sick" ? "🤒 Sjukanmälan:"
-      : v.kind === "sick_removed" ? "🙂 Sjukanmälan borttagen:" : "🕐";
+      : v.kind === "sick_removed" ? "🙂 Sjukanmälan borttagen:"
+      : v.kind === "inv_accepted" ? "✅ Inbjudan accepterad:"
+      : v.kind === "inv_declined" ? "❌ Inbjudan avböjd:" : "🕐";
     return `<div class="notif"><div>${pfx} <b>${esc(v.task_name)}</b></div>
       <div class="meta2">${esc((v.stable&&v.stable.name)||"")}</div>
       <div class="notifbtns"><button class="btn sm" data-tnok="${v.id}">Ok</button></div></div>`;
@@ -3187,20 +3214,26 @@ async function renderSchoolSchedule(stableId){
       <div class="card schedtop">
         <div class="schedeyebrow">Schema · Ridskola</div>
         <h1 class="schedname">${esc(st.data.name)}</h1>
-        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-          <button class="btn sm${scSchedMode==="lessons"?" primary":""}" id="scmLes">Ridlektioner</button>
-          <button class="btn sm${scSchedMode==="tasks"?" primary":""}" id="scmTask">Arbetspass</button>
-          <button class="btn sm${scOnlyMine?" primary":""}" id="scmMine" title="Visa bara det som rör dig">Bara mina</button>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-          <button class="btn sm${scCalMode==="day"?" primary":""}" id="scvDay">Dag</button>
-          <button class="btn sm${scCalMode==="week"?" primary":""}" id="scvWeek">Vecka</button>
-          <button class="btn sm${scCalMode==="month"?" primary":""}" id="scvMonth">Månad</button>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
-          <button class="btn sm" id="scwPrev">‹ Förra</button>
-          <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
-          <button class="btn sm" id="scwNext">Nästa ›</button>
+        <div class="schedctrl">
+          <div class="seg" id="segMode">
+            <button data-m="lessons" class="${scSchedMode==="lessons"?"on":""}">Ridlektioner</button>
+            <button data-m="tasks" class="${scSchedMode==="tasks"?"on":""}">Arbetspass</button>
+          </div>
+          <div class="ctrlrow">
+            <button class="swtch${scOnlyMine?" on":""}" id="scmMine" title="Växla mellan dina egna pass och allas">
+              <span class="knob"></span><span class="swlbl">${scOnlyMine?"Bara mina pass":"Alla pass"}</span>
+            </button>
+            <div class="seg small" id="segCal">
+              <button data-c="day" class="${scCalMode==="day"?"on":""}">Dag</button>
+              <button data-c="week" class="${scCalMode==="week"?"on":""}">Vecka</button>
+              <button data-c="month" class="${scCalMode==="month"?"on":""}">Månad</button>
+            </div>
+          </div>
+          <div class="navrow">
+            <button class="btn sm" id="scwPrev">‹ Förra</button>
+            <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
+            <button class="btn sm" id="scwNext">Nästa ›</button>
+          </div>
         </div>
       </div>
       <div class="card"><div class="scgw" id="scsGrid"></div></div>
@@ -3229,12 +3262,19 @@ async function renderSchoolSchedule(stableId){
       scMonthDate = new Date(now.getFullYear(), now.getMonth(), 1);
       renderSchoolSchedule(stableId);
     };
-    el("scmLes").onclick = ()=>{ if(scSchedMode!=="lessons"){ scSchedMode="lessons"; scSel=null; renderSchoolSchedule(stableId); } };
-    el("scmTask").onclick = ()=>{ if(scSchedMode!=="tasks"){ scSchedMode="tasks"; scSel=null; renderSchoolSchedule(stableId); } };
+    el("segMode").querySelectorAll("[data-m]").forEach(b=> b.onclick = ()=>{
+      const m = b.getAttribute("data-m");
+      if(scSchedMode !== m){ scSchedMode = m; scSel = null; renderSchoolSchedule(stableId); }
+    });
     el("scmMine").onclick = ()=>{ scOnlyMine = !scOnlyMine; scSel = null; renderSchoolSchedule(stableId); };
-    el("scvDay").onclick = ()=>{ if(scCalMode!=="day"){ scCalMode = "day"; renderSchoolSchedule(stableId); } };
-    el("scvWeek").onclick = ()=>{ if(scCalMode!=="week"){ scCalMode = "week"; renderSchoolSchedule(stableId); } };
-    el("scvMonth").onclick = ()=>{ if(scCalMode!=="month"){ scCalMode = "month"; const a=new Date(weekStart2); scMonthDate = new Date(a.getFullYear(), a.getMonth(), 1); renderSchoolSchedule(stableId); } };
+    el("segCal").querySelectorAll("[data-c]").forEach(b=> b.onclick = ()=>{
+      const c = b.getAttribute("data-c");
+      if(scCalMode !== c){
+        scCalMode = c;
+        if(c === "month"){ const a = new Date(weekStart2); scMonthDate = new Date(a.getFullYear(), a.getMonth(), 1); }
+        renderSchoolSchedule(stableId);
+      }
+    });
     await drawSchoolWeek();
   }catch(e){ el("scsShell").innerHTML = msg("Kunde inte öppna schemat: " + (e.message||e) + " (har du kört db/ridskola.sql?)", "err"); }
 }
