@@ -126,14 +126,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
 .seg.small{max-width:none;margin:0;width:auto}
 .seg.small button{padding:6px 12px;font-size:.82rem}
-.ctrlrow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.swtch{display:inline-flex;align-items:center;gap:8px;border:none;background:transparent;cursor:pointer;padding:0;color:var(--ink);font-family:inherit}
-.swtch .knob{width:40px;height:22px;border-radius:999px;background:var(--line);position:relative;transition:background .15s;flex-shrink:0}
-.swtch .knob::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:var(--card);transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
-.swtch.on .knob{background:var(--accent)}
-.swtch.on .knob::after{left:20px}
-.swtch .swlbl{font-size:.88rem;font-weight:600}
-.navrow{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+/* Alla/Mina och Dag/Vecka/Månad står ihop, centrerade under lägesvalet */
+.ctrlrow{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
+/* Vecko-/dagnavigeringen sitter i schemarutan, avskild med en tunn linje */
+.navrow{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line)}
 @media (max-width:640px){
   .scg{gap:3px}
   .scg .gut{width:26px}

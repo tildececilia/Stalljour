@@ -3534,23 +3534,26 @@ async function renderSchoolSchedule(stableId){
             <button data-m="tasks" class="${scSchedMode==="tasks"?"on":""}">Arbetspass</button>
           </div>
           <div class="ctrlrow">
-            <button class="swtch${scOnlyMine?" on":""}" id="scmMine" title="Växla mellan dina egna pass och allas">
-              <span class="knob"></span><span class="swlbl">${scOnlyMine?"Bara mina pass":"Alla pass"}</span>
-            </button>
+            <div class="seg small" id="segMine">
+              <button data-o="all" class="${scOnlyMine?"":"on"}">Alla ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
+              <button data-o="mine" class="${scOnlyMine?"on":""}">Mina ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
+            </div>
             <div class="seg small" id="segCal">
               <button data-c="day" class="${scCalMode==="day"?"on":""}">Dag</button>
               <button data-c="week" class="${scCalMode==="week"?"on":""}">Vecka</button>
               <button data-c="month" class="${scCalMode==="month"?"on":""}">Månad</button>
             </div>
           </div>
-          <div class="navrow">
-            <button class="btn sm" id="scwPrev">‹ Förra</button>
-            <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
-            <button class="btn sm" id="scwNext">Nästa ›</button>
-          </div>
         </div>
       </div>
-      <div class="card"><div class="scgw" id="scsGrid"></div></div>
+      <div class="card">
+        <div class="navrow">
+          <button class="btn sm" id="scwPrev">‹ Förra</button>
+          <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
+          <button class="btn sm" id="scwNext">Nästa ›</button>
+        </div>
+        <div class="scgw" id="scsGrid"></div>
+      </div>
       <div id="scsDetail"></div>`;
     const shift = dir=>{
       if(scCalMode === "day"){
@@ -3580,7 +3583,10 @@ async function renderSchoolSchedule(stableId){
       const m = b.getAttribute("data-m");
       if(scSchedMode !== m){ scSchedMode = m; scSel = null; renderSchoolSchedule(stableId); }
     });
-    el("scmMine").onclick = ()=>{ scOnlyMine = !scOnlyMine; scSel = null; renderSchoolSchedule(stableId); };
+    el("segMine").querySelectorAll("[data-o]").forEach(b=> b.onclick = ()=>{
+      const only = b.getAttribute("data-o") === "mine";
+      if(scOnlyMine !== only){ scOnlyMine = only; scSel = null; renderSchoolSchedule(stableId); }
+    });
     el("segCal").querySelectorAll("[data-c]").forEach(b=> b.onclick = ()=>{
       const c = b.getAttribute("data-c");
       if(scCalMode !== c){
@@ -3624,7 +3630,7 @@ async function drawSchoolWeek(){
     : (scData.tasks||[]).map(t=> ({ type:"task", o:t, wd:t.weekday, start:timeKey(t), dur:t.duration_min||60 }));
   if(scOnlyMine) items = items.filter(i=> i.type === "les" ? scMineLesson(i.o) : scMineTask(i.o));
   if(!items.length){
-    host.innerHTML = `<div class="empty">${scOnlyMine ? "Inget som rör dig här — klicka ur \"Bara mina\" för att se allt." : scSchedMode==="lessons" ? "Inga lektioner än — skapa lektioner under Inställningar." : "Inga arbetspass än — skapa dem under Inställningar."}</div>`;
+    host.innerHTML = `<div class="empty">${scOnlyMine ? `Inget som rör dig här — välj "Alla ${scSchedMode==="lessons"?"lektioner":"pass"}" för att se allt.` : scSchedMode==="lessons" ? "Inga lektioner än — skapa lektioner under Inställningar." : "Inga arbetspass än — skapa dem under Inställningar."}</div>`;
     el("scsDetail").innerHTML = ""; return;
   }
   const days = scCalMode === "day" ? [scDayOff+1] : [1,2,3,4,5,6,7].filter(wd=> items.some(i=> i.wd === wd));
