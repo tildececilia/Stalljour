@@ -1470,6 +1470,8 @@ async function refreshBellCount(){
   if(!iv.error) n += (iv.data||[]).length;
   const tn = await db.from("task_notice").select("id").eq("email", session.email).eq("seen", false);
   if(!tn.error) n += (tn.data||[]).length;
+  const lv = await db.from("rs_leave").select("id,rs_staff(rs_staff_member(email))").eq("status","pending");
+  if(!lv.error) n += (lv.data||[]).filter(x=> !(((x.rs_staff||{}).rs_staff_member)||[]).some(m=> (m.email||"").toLowerCase() === session.email)).length;
   try{ dueReminders = await getDueReminders(); n += dueReminders.length; }catch(e){}
   if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
 }
@@ -1491,19 +1493,30 @@ async function openBellMenu(){
   const invs = iq.error ? [] : (iq.data||[]);
   const tq = await db.from("task_notice").select("id,kind,task_name,stable(name)").eq("email", session.email).eq("seen", false).order("created_at",{ascending:false});
   const tns = tq.error ? [] : (tq.data||[]);
-  if(!mine.length && !rems.length && !invs.length && !tns.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const lq = await db.from("rs_leave").select("id,kind,start_date,end_date,note,rs_staff(name,rs_staff_member(email)),stable(name)").eq("status","pending").order("created_at",{ascending:false});
+  const leaves = (lq.error ? [] : (lq.data||[])).filter(x=> !(((x.rs_staff||{}).rs_staff_member)||[]).some(mm=> (mm.email||"").toLowerCase() === session.email));
+  if(!mine.length && !rems.length && !invs.length && !tns.length && !leaves.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const lvHtml = leaves.map(x=>{
+    const sd = new Date(x.start_date+"T00:00:00"), ed = new Date(x.end_date+"T00:00:00");
+    return `<div class="notif"><div>📅 <b>${esc((x.rs_staff&&x.rs_staff.name)||"Personal")}</b> ansöker om ${esc(x.kind)} ${sd.getDate()}/${sd.getMonth()+1}–${ed.getDate()}/${ed.getMonth()+1}</div>
+      ${x.note?`<div class="meta2">${esc(x.note)}</div>`:""}
+      <div class="meta2">${esc((x.stable&&x.stable.name)||"")}</div>
+      <div class="notifbtns"><button class="btn primary sm" data-lvacc="${x.id}">Bevilja</button><button class="btn sm" data-lvdec="${x.id}">Avslå</button></div></div>`;
+  }).join("");
   const tnHtml = tns.map(v=>{
     const pfx = v.kind === "added" ? "🕐 Du har satts på arbetspasset"
       : v.kind === "removed" ? "🕐 Du har tagits bort från arbetspasset"
       : v.kind === "sick" ? "🤒 Sjukanmälan:"
       : v.kind === "sick_removed" ? "🙂 Sjukanmälan borttagen:"
       : v.kind === "inv_accepted" ? "✅ Inbjudan accepterad:"
-      : v.kind === "inv_declined" ? "❌ Inbjudan avböjd:" : "🕐";
+      : v.kind === "inv_declined" ? "❌ Inbjudan avböjd:"
+      : v.kind === "leave_approved" ? "✅ Ledighet beviljad:"
+      : v.kind === "leave_denied" ? "❌ Ledighet avslagen:" : "🕐";
     return `<div class="notif"><div>${pfx} <b>${esc(v.task_name)}</b></div>
       <div class="meta2">${esc((v.stable&&v.stable.name)||"")}</div>
       <div class="notifbtns"><button class="btn sm" data-tnok="${v.id}">Ok</button></div></div>`;
   }).join("");
-  const invHtml = tnHtml + invs.map(v=>
+  const invHtml = lvHtml + tnHtml + invs.map(v=>
     `<div class="notif"><div>📩 <b>${esc(v.invited_by)}</b> har bjudit in dig till stallet <b>${esc((v.stable&&v.stable.name)||"?")}</b></div>
       <div class="meta2">Som ${esc(inviteRoleLabel(v))}</div>
       <div class="notifbtns"><button class="btn primary sm" data-invacc="${v.id}">Acceptera</button><button class="btn sm" data-invdec="${v.id}">Avböj</button></div></div>`).join("");
@@ -1554,6 +1567,8 @@ async function openBellMenu(){
     await refreshBellCount();
     openBellMenu();
   });
+  m.querySelectorAll("[data-lvacc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveLeave(b.getAttribute("data-lvacc"), true); });
+  m.querySelectorAll("[data-lvdec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveLeave(b.getAttribute("data-lvdec"), false); });
 }
 function namePromptDialog(){
   return new Promise(res=>{
@@ -1611,6 +1626,12 @@ async function applyEmailChange(){
     const r = await db.rpc("apply_email_change");
     if(!r.error && r.data === true){ await refreshMyProfiles(); await refreshBellCount(); render(); }
   }catch(e){}
+}
+async function resolveLeave(id, approve){
+  const r = await db.from("rs_leave").update({ status: approve ? "approved" : "denied", responded_at: new Date().toISOString(), responded_by: session.email }).eq("id", id);
+  if(r.error){ alert("Kunde inte svara på ansökan: " + r.error.message); return; }
+  await refreshBellCount();
+  if(el("bellMenu").classList.contains("open")) await openBellMenu();
 }
 function inviteRoleLabel(v){
   if(v.kind === "admin") return "admin";
@@ -1791,6 +1812,33 @@ async function sendPassRequest(type, bookingId, fromP, toP, label){
 document.querySelectorAll(".islot").forEach(s=>{ s.outerHTML = ic(s.getAttribute("data-icon")); });
 
 /* ============ Mina pass ============ */
+/* Ledighetsansökan: typ + datumintervall + valfri kommentar → chef/admin beviljar i klockan */
+function leaveDialog(stableId, staffId, done){
+  if(!staffId) return;
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  ov.innerHTML = `<div class="modal"><h3>Ansök om ledighet</h3>
+    <div class="field"><label class="fld">Typ</label><select id="lv_kind">
+      <option value="semester">Semester</option><option value="ledighet">Ledighet</option><option value="vab">VAB</option></select></div>
+    <div class="field"><label class="fld">Från</label><input type="date" id="lv_start"></div>
+    <div class="field"><label class="fld">Till</label><input type="date" id="lv_end"></div>
+    <div class="field"><label class="fld">Kommentar (valfritt)</label><input type="text" id="lv_note" maxlength="120"></div>
+    <div id="lv_msg"></div>
+    <div class="modal-btns"><button class="btn" id="lv_cancel">Avbryt</button><button class="btn primary" id="lv_send">Skicka ansökan</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#lv_cancel").onclick = ()=> ov.remove();
+  ov.querySelector("#lv_send").onclick = async ()=>{
+    const start = el("lv_start").value, end = el("lv_end").value;
+    if(!start || !end){ el("lv_msg").innerHTML = msg("Välj både från- och till-datum.", "err"); return; }
+    if(end < start){ el("lv_msg").innerHTML = msg("Till-datumet är före från-datumet.", "err"); return; }
+    const r = await db.from("rs_leave").insert({ stable_id: stableId, staff_id: staffId, kind: el("lv_kind").value,
+      start_date: start, end_date: end, note: (el("lv_note").value||"").trim() || null });
+    if(r.error){ el("lv_msg").innerHTML = msg("Kunde inte skicka: " + r.error.message + " (har db/ledighet.sql körts?)", "err"); return; }
+    ov.remove();
+    infoDialog("Ansökan är skickad! Chef och admin ser den i sin notisklocka och du får en notis när den besvarats.", "Ansökan skickad");
+    if(done) done();
+  };
+}
+
 /* Mina lektioner / Mina arbetspass (ridskola): kommande fyra veckor */
 let mlTab = null;   // "lek" | "pass" — väljs automatiskt första gången
 async function renderMyLessons(stableId){
@@ -1838,6 +1886,11 @@ async function renderMyLessons(stableId){
     if(relTasks.length){
       const tq = await db.from("rs_task_absence").select("*").in("task_id", relTasks.map(x=> x.id)).gte("work_date", tISO).lte("work_date", endISO);
       tAbs = tq.error?[]:tq.data;
+    }
+    let myLeaves = [];
+    if(myStaff.size){
+      const lq2 = await db.from("rs_leave").select("*").in("staff_id", [...myStaff]).order("created_at",{ascending:false});
+      myLeaves = lq2.error?[]:lq2.data;
     }
     if(mlTab === null) mlTab = (!rel.length && relTasks.length) ? "pass" : "lek";
     let html = "";
@@ -1896,15 +1949,35 @@ async function renderMyLessons(stableId){
         </div>`;
       });
     }
+    const fmtD = s=>{ const d = new Date(s+"T00:00:00"); return d.getDate()+"/"+(d.getMonth()+1); };
+    const leaveSec = (mlTab === "pass" && myStaff.size) ? `<div class="card">
+      <div class="sublabel" style="margin-bottom:6px">Ledighet</div>
+      ${myLeaves.map(x=>{
+        const stTag = x.status === "pending" ? `<span class="tagpill st-pend">väntar</span>`
+                    : x.status === "approved" ? `<span class="tagpill">beviljad</span>`
+                    : `<span class="tagpill st-no">avslagen</span>`;
+        const undo = x.status === "pending" ? `<button class="btn sm" data-lvdel="${x.id}">Ångra</button>` : "";
+        return `<div class="scsrow"><span class="scsname" style="font-weight:500">${esc(x.kind)} ${fmtD(x.start_date)}–${fmtD(x.end_date)}${x.note?` <span class="meta2">· ${esc(x.note)}</span>`:""}</span>${stTag}${undo}</div>`;
+      }).join("") || `<div class="meta2">Inga ansökningar än.</div>`}
+      <div style="margin-top:10px"><button class="btn sm" id="mlLeaveBtn">+ Ansök om ledighet</button></div>
+    </div>` : "";
     el("mineShell").innerHTML = `
       <div class="card schedtop"><div class="schedeyebrow">${mlTab==="pass"?"Mina arbetspass":"Mina lektioner"}</div><h1 class="schedname">${esc(st.data.name)}</h1>
         <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap">
           <button class="btn sm${mlTab==="lek"?" primary":""}" id="mlTabLek">Mina lektioner</button>
           <button class="btn sm${mlTab==="pass"?" primary":""}" id="mlTabPass">Mina arbetspass</button>
         </div></div>
+      ${leaveSec}
       ${html || `<div class="card"><div class="empty">${mlTab==="pass"?"Inga kommande arbetspass för dig de närmaste fyra veckorna.":"Inga kommande lektioner för dig de närmaste fyra veckorna."}</div></div>`}`;
     el("mlTabLek").onclick = ()=>{ if(mlTab!=="lek"){ mlTab = "lek"; renderMyLessons(stableId); } };
     el("mlTabPass").onclick = ()=>{ if(mlTab!=="pass"){ mlTab = "pass"; renderMyLessons(stableId); } };
+    const lb = el("mlLeaveBtn");
+    if(lb) lb.onclick = ()=> leaveDialog(stableId, [...myStaff][0], ()=> renderMyLessons(stableId));
+    document.querySelectorAll("[data-lvdel]").forEach(b=> b.onclick = async ()=>{
+      if(!(await confirmDialog("Ångra ansökan?", { okText:"Ja, ångra" }))) return;
+      await db.from("rs_leave").delete().eq("id", b.getAttribute("data-lvdel"));
+      renderMyLessons(stableId);
+    });
     document.querySelectorAll("[data-mlsick]").forEach(b=> b.onclick = async ()=>{
       const [gid, dI, sid] = b.getAttribute("data-mlsick").split("|");
       const stu = students.find(x=> x.id === sid);
@@ -3172,7 +3245,7 @@ let scDayOff = 0;                // vald dag i dagvyn (0=måndag)
 let scMonthDate = null;          // första dagen i månadsvyns månad
 let scOnlyMine = false;          // visa bara det som rör mig
 let scSel = null;                // valt block: {type:"les"|"task", id, wd}
-let scWeekAsg = [], scWeekAbs = [], scWeekNotes = [], scWeekTAbs = [];   // veckans tilldelningar + sjukanmälningar (lektion/arbetspass) + planeringar
+let scWeekAsg = [], scWeekAbs = [], scWeekNotes = [], scWeekTAbs = [], scWeekLeave = [];   // veckans tilldelningar, sjukanmälningar, planeringar, beviljad ledighet
 let scNoteOpen = false;               // planerings-textrutan utfälld i panelen?
 
 async function renderSchoolSchedule(stableId){
@@ -3296,9 +3369,13 @@ async function drawSchoolWeek(){
     scWeekAsg = aq.error?[]:aq.data; scWeekAbs = bq.error?[]:bq.data; scWeekNotes = nq.error?[]:nq.data;
   }
   if(scSchedMode === "tasks" && (scData.tasks||[]).length){
-    const tq = await db.from("rs_task_absence").select("*").in("task_id", scData.tasks.map(t=> t.id)).gte("work_date", startISO).lte("work_date", endISO);
+    const [tq, lq] = await Promise.all([
+      db.from("rs_task_absence").select("*").in("task_id", scData.tasks.map(t=> t.id)).gte("work_date", startISO).lte("work_date", endISO),
+      db.from("rs_leave").select("*").eq("status","approved").lte("start_date", endISO).gte("end_date", startISO)
+    ]);
     scWeekTAbs = tq.error?[]:tq.data;
-  }
+    scWeekLeave = lq.error?[]:lq.data;
+  } else scWeekLeave = [];
   let items = scSchedMode === "lessons"
     ? scData.groups.map(g=> ({ type:"les", o:g, wd:g.weekday, start:timeKey(g), dur:g.duration_min||60 }))
     : (scData.tasks||[]).map(t=> ({ type:"task", o:t, wd:t.weekday, start:timeKey(t), dur:t.duration_min||60 }));
@@ -3454,6 +3531,11 @@ function drawScsDetail(){
       .map(x=> (scData.staff||[]).find(f=> f.id === x.staff_id)).filter(Boolean);
     const wWarns = taskWorkWarnings(tk);
     const rows = tStaff.map(f=>{
+      const onLeave = scWeekLeave.find(x=> x.staff_id===f.id && x.start_date <= dISO && x.end_date >= dISO);
+      if(onLeave){
+        wWarns.push(`${f.name} har beviljad ${onLeave.kind} det här datumet — passet kan behöva täckas`);
+        return `<div class="scsrow scssick"><span class="scsname">${esc(f.name)}${myStaff.has(f.id)?` <span class="tagpill">du</span>`:""}</span><span class="tagpill st-no" title="Beviljad ${esc(onLeave.kind)}">ledig</span></div>`;
+      }
       const sick = scWeekTAbs.some(x=> x.task_id===tk.id && x.work_date===dISO && x.staff_id===f.id);
       const mine = myStaff.has(f.id);
       const sickBit = sick
