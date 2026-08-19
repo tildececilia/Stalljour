@@ -3533,16 +3533,14 @@ async function renderSchoolSchedule(stableId){
             <button data-m="lessons" class="${scSchedMode==="lessons"?"on":""}">Ridlektioner</button>
             <button data-m="tasks" class="${scSchedMode==="tasks"?"on":""}">Arbetspass</button>
           </div>
-          <div class="ctrlrow">
-            <div class="seg small" id="segMine">
-              <button data-o="all" class="${scOnlyMine?"":"on"}">Alla ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
-              <button data-o="mine" class="${scOnlyMine?"on":""}">Mina ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
-            </div>
-            <div class="seg small" id="segCal">
-              <button data-c="day" class="${scCalMode==="day"?"on":""}">Dag</button>
-              <button data-c="week" class="${scCalMode==="week"?"on":""}">Vecka</button>
-              <button data-c="month" class="${scCalMode==="month"?"on":""}">Månad</button>
-            </div>
+          <div class="seg small" id="segMine">
+            <button data-o="all" class="${scOnlyMine?"":"on"}">Alla ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
+            <button data-o="mine" class="${scOnlyMine?"on":""}">Mina ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
+          </div>
+          <div class="seg small" id="segCal">
+            <button data-c="day" class="${scCalMode==="day"?"on":""}">Dag</button>
+            <button data-c="week" class="${scCalMode==="week"?"on":""}">Vecka</button>
+            <button data-c="month" class="${scCalMode==="month"?"on":""}">Månad</button>
           </div>
         </div>
       </div>

@@ -120,14 +120,13 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .mchip{font-size:.58rem;line-height:1.3;border-radius:5px;padding:1px 4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
 @media (max-width:640px){ .mcell{min-height:54px} .mchip{font-size:.5rem} .mnum{font-size:.6rem} }
 /* Schemakontroller: segment + skiftknapp */
-.schedctrl{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+/* Lägesvalet överst, sedan Alla/Mina och Dag/Vecka/Månad på egna rader under */
+.schedctrl{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:6px}
 .seg{display:flex;background:var(--card-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px;max-width:360px;margin:0 auto;width:100%}
 .seg button{flex:1;border:none;background:transparent;color:var(--muted);font-weight:600;font-size:.88rem;padding:8px 14px;border-radius:999px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
 .seg.small{max-width:none;margin:0;width:auto}
 .seg.small button{padding:6px 12px;font-size:.82rem}
-/* Alla/Mina och Dag/Vecka/Månad står ihop, centrerade under lägesvalet */
-.ctrlrow{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
 /* Vecko-/dagnavigeringen sitter i schemarutan, avskild med en tunn linje */
 .navrow{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line)}
 @media (max-width:640px){
