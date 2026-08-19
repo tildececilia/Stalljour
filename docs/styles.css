@@ -3,6 +3,7 @@
   --ink:#12352c; --muted:#57695e; --line:#c3d2c6;
   --accent:#14453a; --accent-ink:#e8f2ea; --accent-soft:rgba(20,69,58,.10);
   --danger:#c0453b; --shadow:0 1px 3px rgba(15,43,36,.06),0 8px 24px rgba(15,43,36,.08);
+  --mine-blk:rgba(20,69,58,.22); --mine-brd:#14453a;   /* schemablock man själv står på */
   --font-body:"Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --font-head:"Outfit",system-ui,sans-serif;
 }
@@ -11,6 +12,7 @@
   --ink:#dbe5dc; --muted:#92ab9e; --line:#24483d;
   --accent:#9fd0b4; --accent-ink:#0c2822; --accent-soft:rgba(159,208,180,.14);
   --danger:#e07168; --shadow:0 1px 3px rgba(0,0,0,.35),0 10px 30px rgba(0,0,0,.3);
+  --mine-blk:rgba(159,208,180,.26); --mine-brd:#9fd0b4;
 }
 *{box-sizing:border-box}
 html,body{margin:0}
@@ -127,8 +129,20 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
 .seg.small{max-width:none;margin:0;width:auto}
 .seg.small button{padding:6px 12px;font-size:.82rem}
-/* Vecko-/dagnavigeringen sitter i schemarutan, avskild med en tunn linje */
-.navrow{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+/* Schemarutans egen rubrikrad: kryssrutan i vänstra hörnet, navigeringen mitt i */
+.navrow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.navmid{grid-column:2;grid-row:1;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+.navrow label.chk.sm{grid-column:1;grid-row:1;justify-self:start;font-size:.8rem;font-weight:600;color:var(--muted);gap:7px;padding:0}
+.navrow label.chk.sm input{width:15px;height:15px}
+@media (max-width:640px){
+  .navrow{grid-template-columns:1fr;gap:10px}
+  .navmid{grid-column:1;grid-row:auto}
+  .navrow label.chk.sm{grid-column:1;grid-row:auto}
+}
+/* Färgkod: block man själv står på */
+.scblk.mine{border-left-width:4px}
+.scleg{display:flex;align-items:center;gap:7px;font-size:.75rem;color:var(--muted);margin-top:12px}
+.scleg .legdot{width:13px;height:13px;border-radius:4px;background:var(--mine-blk);border:1px solid var(--mine-brd);border-left-width:4px;flex-shrink:0}
 @media (max-width:640px){
   .scg{gap:3px}
   .scg .gut{width:26px}

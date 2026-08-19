@@ -2493,6 +2493,18 @@ function scMineTask(t){
   return (scData.taskStaff||[]).some(x=> x.task_id===t.id && mf.has(x.staff_id))
       || (scWeekSwap||[]).some(s=> s.task_id===t.id && swapActive(s) && mf.has(s.taker_staff));
 }
+/* Liten förklaring under schemat till färgen på egna block (onödig när man filtrerat bort allt annat) */
+function scLegend(anyMine){
+  if(!anyMine || scOnlyMine) return "";
+  return `<div class="scleg"><span class="legdot"></span>Grönt = ${scSchedMode==="lessons"?"lektioner du är med på":"pass du är schemalagd på"}</div>`;
+}
+/* Jobbar jag arbetspasset just det datumet? (godkända passbyten räknas) */
+function scMineTaskOn(t, dISO){
+  const mf = rsMyStaffIds();
+  const base = (scData.taskStaff||[]).filter(x=> x.task_id===t.id).map(x=> x.staff_id);
+  const eff = taskEffectiveStaff(base, (scWeekSwap||[]).filter(s=> s.task_id===t.id && s.work_date===dISO && swapActive(s)));
+  return [...eff].some(id=> mf.has(id));
+}
 
 /* ---- Passbyten på arbetspass ----
    Ett godkänt byte flyttar passet bara det datumet — arbetspasset
@@ -3533,10 +3545,6 @@ async function renderSchoolSchedule(stableId){
             <button data-m="lessons" class="${scSchedMode==="lessons"?"on":""}">Ridlektioner</button>
             <button data-m="tasks" class="${scSchedMode==="tasks"?"on":""}">Arbetspass</button>
           </div>
-          <div class="seg small" id="segMine">
-            <button data-o="all" class="${scOnlyMine?"":"on"}">Alla ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
-            <button data-o="mine" class="${scOnlyMine?"on":""}">Mina ${scSchedMode==="lessons"?"lektioner":"pass"}</button>
-          </div>
           <div class="seg small" id="segCal">
             <button data-c="day" class="${scCalMode==="day"?"on":""}">Dag</button>
             <button data-c="week" class="${scCalMode==="week"?"on":""}">Vecka</button>
@@ -3546,9 +3554,12 @@ async function renderSchoolSchedule(stableId){
       </div>
       <div class="card">
         <div class="navrow">
-          <button class="btn sm" id="scwPrev">‹ Förra</button>
-          <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
-          <button class="btn sm" id="scwNext">Nästa ›</button>
+          <div class="navmid">
+            <button class="btn sm" id="scwPrev">‹ Förra</button>
+            <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
+            <button class="btn sm" id="scwNext">Nästa ›</button>
+          </div>
+          <label class="chk sm"><input type="checkbox" id="scmMine"${scOnlyMine?" checked":""}> Visa endast mina ${scSchedMode==="lessons"?"lektioner":"pass"}</label>
         </div>
         <div class="scgw" id="scsGrid"></div>
       </div>
@@ -3581,10 +3592,7 @@ async function renderSchoolSchedule(stableId){
       const m = b.getAttribute("data-m");
       if(scSchedMode !== m){ scSchedMode = m; scSel = null; renderSchoolSchedule(stableId); }
     });
-    el("segMine").querySelectorAll("[data-o]").forEach(b=> b.onclick = ()=>{
-      const only = b.getAttribute("data-o") === "mine";
-      if(scOnlyMine !== only){ scOnlyMine = only; scSel = null; renderSchoolSchedule(stableId); }
-    });
+    el("scmMine").onchange = (e)=>{ scOnlyMine = e.target.checked; scSel = null; renderSchoolSchedule(stableId); };
     el("segCal").querySelectorAll("[data-c]").forEach(b=> b.onclick = ()=>{
       const c = b.getAttribute("data-c");
       if(scCalMode !== c){
@@ -3641,6 +3649,7 @@ async function drawSchoolWeek(){
   scData.groups.forEach(g=>{ const k=g.category_id||"none"; if(k!=="none" && !(k in catTint)){ catTint[k]=CAT_HUES[ci%CAT_HUES.length]; ci++; } });
   let hourLbls = "";
   for(let m=tmin; m<=tmax; m+=60) hourLbls += `<div class="hlbl" style="top:${(m-tmin)*PX}px">${String(Math.floor(m/60)).padStart(2,"0")}:00</div>`;
+  let anyMine = false;
   let cols = `<div class="gut"><div class="dhead">&nbsp;</div><div class="gbody" style="height:${bodyH}px">${hourLbls}</div></div>`;
   days.forEach(wd=>{
     const d = new Date(weekStart2); d.setDate(d.getDate()+wd-1);
@@ -3653,15 +3662,20 @@ async function drawSchoolWeek(){
     for(let m=tmin+60; m<tmax; m+=60) hl += `<div class="hline" style="top:${(m-tmin)*PX}px"></div>`;
     const bl = blocks.map(b=>{
       const isSel = scSel && scSel.type===b.type && scSel.id===b.o.id && scSel.wd===wd;
+      // det jag själv står på färgas i stallets gröna — övrigt behåller sin vanliga färg
+      const isMine = b.type==="les" ? scMineLesson(b.o) : scMineTaskOn(b.o, dISO);
+      if(isMine) anyMine = true;
       let tint;
-      if(b.type==="les"){
+      if(isMine){
+        tint = `background:var(--mine-blk);border-color:var(--mine-brd)`;
+      } else if(b.type==="les"){
         const hu = hashHue(String(b.o.id));   // egen färg per lektion, som profilfärgerna i jouren
         tint = `background:hsla(${hu},45%,45%,.18);border-color:hsla(${hu},40%,42%,.6)`;
       } else tint = `background:var(--card-2);border-color:var(--muted)`;
       const hasNote = b.type==="les" && scWeekNotes.some(x=> x.group_id===b.o.id && x.lesson_date===dISO && (x.note||"").trim());
       const clash = b.type==="les" && lessonConflicts(b.o).length > 0;
       const w = 100/nl;
-      return `<div class="scblk${b.type==="task"?" task":""}${isSel?" sel":""}${clash?" clash":""}" data-selblk="${b.type}|${b.o.id}|${wd}"
+      return `<div class="scblk${b.type==="task"?" task":""}${isMine?" mine":""}${isSel?" sel":""}${clash?" clash":""}" data-selblk="${b.type}|${b.o.id}|${wd}"
         style="top:${(b.start-tmin)*PX}px;height:${Math.max(26, b.dur*PX-2)}px;left:calc(${b.lane*w}% + 3px);width:calc(${w}% - 6px);${tint}">
         <b>${clash?"⚠ ":""}${esc(b.o.name)}</b>${b.o.start_time}–${rsEndTime(b.o.start_time, b.o.duration_min)}${hasNote?" ✎":""}</div>`;
     }).join("");
@@ -3670,7 +3684,7 @@ async function drawSchoolWeek(){
     cols += `<div class="day"><div class="dhead${dISO===tISO?" today":""}">${RS_WD[wd].slice(0,3)} ${d.getDate()}/${d.getMonth()+1}${printBtn}</div>
       <div class="dbody" style="height:${bodyH}px">${hl}${bl}</div></div>`;
   });
-  host.innerHTML = `<div class="scg${scCalMode==="day"?" dayview":""}">${cols}</div>`;
+  host.innerHTML = `<div class="scg${scCalMode==="day"?" dayview":""}">${cols}</div>${scLegend(anyMine)}`;
   host.querySelectorAll("[data-selblk]").forEach(n=> n.onclick = ()=>{
     const [tp, id, wd] = n.getAttribute("data-selblk").split("|");
     scSel = { type: tp, id, wd: parseInt(wd,10) };
@@ -3699,6 +3713,7 @@ function drawSchoolMonth(){
   const daysInMonth = new Date(first.getFullYear(), first.getMonth()+1, 0).getDate();
   const weeks = Math.ceil((startO + daysInMonth) / 7);
   const tISO = isoDate(new Date());
+  let anyMine = false;
   let cells = [1,2,3,4,5,6,7].map(wd=> `<div class="mhead">${RS_WD[wd].slice(0,3)}</div>`).join("");
   for(let i=0; i<weeks*7; i++){
     const d = new Date(first); d.setDate(1 - startO + i);
@@ -3706,14 +3721,17 @@ function drawSchoolMonth(){
     const wd = ((d.getDay()+6)%7)+1;
     const dISO = isoDate(d);
     const chips = inMonth ? items.filter(x=> x.wd === wd).sort((a,b)=> a.start-b.start).map(x=>{
+      const isMine = x.type==="les" ? scMineLesson(x.o) : scMineTaskOn(x.o, dISO);
+      if(isMine) anyMine = true;
       const hu = x.type==="les" ? hashHue(String(x.o.id)) : null;
-      const st = x.type==="les" ? `background:hsla(${hu},45%,45%,.22)` : `background:var(--card-2);border:1px dashed var(--muted)`;
+      const st = isMine ? `background:var(--mine-blk);border:1px solid var(--mine-brd);border-left-width:3px`
+        : x.type==="les" ? `background:hsla(${hu},45%,45%,.22)` : `background:var(--card-2);border:1px dashed var(--muted)`;
       return `<div class="mchip" style="${st}">${x.o.start_time} ${esc(x.o.name)}</div>`;
     }).join("") : "";
     cells += `<div class="mcell${inMonth?"":" mout"}${dISO===tISO?" mtoday":""}" ${inMonth?`data-mday="${dISO}"`:""}>
       <div class="mnum">${d.getDate()}</div>${chips}</div>`;
   }
-  host.innerHTML = `<div class="mgrid">${cells}</div>`;
+  host.innerHTML = `<div class="mgrid">${cells}</div>${scLegend(anyMine)}`;
   el("scsDetail").innerHTML = `<div class="card"><div class="empty">Klicka på en dag för att öppna dagvyn.</div></div>`;
   host.querySelectorAll("[data-mday]").forEach(c=> c.onclick = ()=>{
     const d = new Date(c.getAttribute("data-mday") + "T00:00:00");
