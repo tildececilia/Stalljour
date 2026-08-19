@@ -129,19 +129,17 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
 .seg.small{max-width:none;margin:0;width:auto}
 .seg.small button{padding:6px 12px;font-size:.82rem}
-/* Schemarutans egen rubrikrad: kryssrutan i vänstra hörnet, navigeringen mitt i */
-.navrow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line)}
-.navmid{grid-column:2;grid-row:1;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
-.navrow label.chk.sm{grid-column:1;grid-row:1;justify-self:start;font-size:.68rem;font-weight:600;color:var(--muted);gap:5px;padding:0;line-height:1.2;white-space:nowrap}
-.navrow label.chk.sm input{width:13px;height:13px}
-@media (max-width:640px){
-  .navrow{grid-template-columns:1fr;gap:10px}
-  .navmid{grid-column:1;grid-row:auto}
-  .navrow label.chk.sm{grid-column:1;grid-row:auto}
-}
+/* Vecko-/dagnavigeringen överst i schemarutan, avskild med en tunn linje */
+.navrow{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.navmid{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+/* Schemarutans fot: filtret till vänster, färgförklaringen till höger */
+.scfoot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:11px;border-top:1px solid var(--line)}
+.scfoot:empty{display:none}
+.scfoot label.chk.sm{font-size:.75rem;font-weight:600;color:var(--muted);gap:7px;padding:0;line-height:1.2;white-space:nowrap}
+.scfoot label.chk.sm input{width:14px;height:14px}
 /* Färgkod: block man själv står på */
 .scblk.mine{border-left-width:4px}
-.scleg{display:flex;align-items:center;gap:7px;font-size:.75rem;color:var(--muted);margin-top:12px}
+.scleg{display:flex;align-items:center;gap:7px;font-size:.75rem;color:var(--muted)}
 .scleg .legdot{width:13px;height:13px;border-radius:4px;background:var(--mine-blk);border:1px solid var(--mine-brd);border-left-width:4px;flex-shrink:0}
 @media (max-width:640px){
   .scg{gap:3px}

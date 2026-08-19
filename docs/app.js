@@ -2493,10 +2493,11 @@ function scMineTask(t){
   return (scData.taskStaff||[]).some(x=> x.task_id===t.id && mf.has(x.staff_id))
       || (scWeekSwap||[]).some(s=> s.task_id===t.id && swapActive(s) && mf.has(s.taker_staff));
 }
-/* Liten förklaring under schemat till färgen på egna block (onödig när man filtrerat bort allt annat) */
+/* Liten förklaring i schemarutans fot till färgen på egna block (onödig när man filtrerat bort allt annat) */
 function scLegend(anyMine){
-  if(!anyMine || scOnlyMine) return "";
-  return `<div class="scleg"><span class="legdot"></span>Grönt = ${scSchedMode==="lessons"?"lektioner du är med på":"pass du är schemalagd på"}</div>`;
+  const host = el("scsLegend"); if(!host) return;
+  host.innerHTML = (!anyMine || scOnlyMine) ? ""
+    : `<div class="scleg"><span class="legdot"></span>Grönt = ${scSchedMode==="lessons"?"lektioner du är med på":"pass du är schemalagd på"}</div>`;
 }
 /* Jobbar jag arbetspasset just det datumet? (godkända passbyten räknas) */
 function scMineTaskOn(t, dISO){
@@ -3559,9 +3560,12 @@ async function renderSchoolSchedule(stableId){
             <button class="btn sm" id="scwWeek" title="Hoppa till idag">${esc(navLbl)}</button>
             <button class="btn sm" id="scwNext">Nästa ›</button>
           </div>
-          <label class="chk sm"><input type="checkbox" id="scmMine"${scOnlyMine?" checked":""}> Visa endast mina ${scSchedMode==="lessons"?"lektioner":"pass"}</label>
         </div>
         <div class="scgw" id="scsGrid"></div>
+        <div class="scfoot">
+          <label class="chk sm"><input type="checkbox" id="scmMine"${scOnlyMine?" checked":""}> Visa endast mina ${scSchedMode==="lessons"?"lektioner":"pass"}</label>
+          <div id="scsLegend"></div>
+        </div>
       </div>
       <div id="scsDetail"></div>`;
     const shift = dir=>{
@@ -3637,7 +3641,7 @@ async function drawSchoolWeek(){
   if(scOnlyMine) items = items.filter(i=> i.type === "les" ? scMineLesson(i.o) : scMineTask(i.o));
   if(!items.length){
     host.innerHTML = `<div class="empty">${scOnlyMine ? `Inget som rör dig här — välj "Alla ${scSchedMode==="lessons"?"lektioner":"pass"}" för att se allt.` : scSchedMode==="lessons" ? "Inga lektioner än — skapa lektioner under Inställningar." : "Inga arbetspass än — skapa dem under Inställningar."}</div>`;
-    el("scsDetail").innerHTML = ""; return;
+    el("scsDetail").innerHTML = ""; scLegend(false); return;
   }
   const days = scCalMode === "day" ? [scDayOff+1] : [1,2,3,4,5,6,7].filter(wd=> items.some(i=> i.wd === wd));
   const tmin = Math.floor(Math.min(...items.map(i=> i.start))/60)*60;
@@ -3684,7 +3688,8 @@ async function drawSchoolWeek(){
     cols += `<div class="day"><div class="dhead${dISO===tISO?" today":""}">${RS_WD[wd].slice(0,3)} ${d.getDate()}/${d.getMonth()+1}${printBtn}</div>
       <div class="dbody" style="height:${bodyH}px">${hl}${bl}</div></div>`;
   });
-  host.innerHTML = `<div class="scg${scCalMode==="day"?" dayview":""}">${cols}</div>${scLegend(anyMine)}`;
+  host.innerHTML = `<div class="scg${scCalMode==="day"?" dayview":""}">${cols}</div>`;
+  scLegend(anyMine);
   host.querySelectorAll("[data-selblk]").forEach(n=> n.onclick = ()=>{
     const [tp, id, wd] = n.getAttribute("data-selblk").split("|");
     scSel = { type: tp, id, wd: parseInt(wd,10) };
@@ -3731,7 +3736,8 @@ function drawSchoolMonth(){
     cells += `<div class="mcell${inMonth?"":" mout"}${dISO===tISO?" mtoday":""}" ${inMonth?`data-mday="${dISO}"`:""}>
       <div class="mnum">${d.getDate()}</div>${chips}</div>`;
   }
-  host.innerHTML = `<div class="mgrid">${cells}</div>${scLegend(anyMine)}`;
+  host.innerHTML = `<div class="mgrid">${cells}</div>`;
+  scLegend(anyMine);
   el("scsDetail").innerHTML = `<div class="card"><div class="empty">Klicka på en dag för att öppna dagvyn.</div></div>`;
   host.querySelectorAll("[data-mday]").forEach(c=> c.onclick = ()=>{
     const d = new Date(c.getAttribute("data-mday") + "T00:00:00");
