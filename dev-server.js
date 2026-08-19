@@ -13,4 +13,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { "content-type": types[path.extname(fp)] || "application/octet-stream" });
     res.end(data);
   });
-}).listen(5178, () => console.log("Stalljour dev: http://localhost:5178"));
+}).listen(process.env.PORT || 5178, function(){ console.log("Stalljour dev: http://localhost:" + this.address().port); });

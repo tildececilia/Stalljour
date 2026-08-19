@@ -6,6 +6,13 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["dev-server.js"],
       "port": 5178
+    },
+    {
+      "name": "stalljour-test",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev-server.js"],
+      "port": 5180,
+      "autoPort": true
     }
   ]
 }

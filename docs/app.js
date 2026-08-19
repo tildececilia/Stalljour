@@ -1454,6 +1454,19 @@ async function refreshMyProfiles(){
   if(!r.error) myProfileIds = new Set((r.data||[]).map(x=> x.profile_id));
 }
 
+/* Passbyten i klockan: förfrågningar till mig, och byten som väntar på mitt
+   godkännande (RLS gör att jag bara ser andras byten om jag är chef/admin) */
+const SWAP_SEL = "id,asked_by,status,chef_status,work_date,note,rs_task(name),stable(name)"
+  + ",giver:rs_staff!rs_task_swap_giver_staff_fkey(name,rs_staff_member(email))"
+  + ",taker:rs_staff!rs_task_swap_taker_staff_fkey(name,rs_staff_member(email))";
+function swEmails(o){ return (((o||{}).rs_staff_member)||[]).map(m=> (m.email||"").toLowerCase()); }
+function swapBellRelevant(s){
+  const recip = s.asked_by === "giver" ? s.taker : s.giver;
+  if(s.status === "pending") return swEmails(recip).includes(session.email);
+  if(s.status === "accepted" && s.chef_status === "pending")
+    return !swEmails(s.giver).concat(swEmails(s.taker)).includes(session.email);
+  return false;
+}
 function bellRelevant(x){
   const incoming = x.status === "pending" && myProfileIds.has(x.to_profile);
   const outcome  = (x.status === "accepted" || x.status === "declined")
@@ -1472,6 +1485,8 @@ async function refreshBellCount(){
   if(!tn.error) n += (tn.data||[]).length;
   const lv = await db.from("rs_leave").select("id,rs_staff(rs_staff_member(email))").eq("status","pending");
   if(!lv.error) n += (lv.data||[]).filter(x=> !(((x.rs_staff||{}).rs_staff_member)||[]).some(m=> (m.email||"").toLowerCase() === session.email)).length;
+  const sw = await db.from("rs_task_swap").select(SWAP_SEL).neq("status","declined");
+  if(!sw.error) n += (sw.data||[]).filter(swapBellRelevant).length;
   try{ dueReminders = await getDueReminders(); n += dueReminders.length; }catch(e){}
   if(n > 0){ b.textContent = n; b.style.display = ""; } else b.style.display = "none";
 }
@@ -1495,7 +1510,25 @@ async function openBellMenu(){
   const tns = tq.error ? [] : (tq.data||[]);
   const lq = await db.from("rs_leave").select("id,kind,start_date,end_date,note,rs_staff(name,rs_staff_member(email)),stable(name)").eq("status","pending").order("created_at",{ascending:false});
   const leaves = (lq.error ? [] : (lq.data||[])).filter(x=> !(((x.rs_staff||{}).rs_staff_member)||[]).some(mm=> (mm.email||"").toLowerCase() === session.email));
-  if(!mine.length && !rems.length && !invs.length && !tns.length && !leaves.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const swq = await db.from("rs_task_swap").select(SWAP_SEL).neq("status","declined").order("created_at",{ascending:false});
+  const swaps = (swq.error ? [] : (swq.data||[])).filter(swapBellRelevant);
+  if(!mine.length && !rems.length && !invs.length && !tns.length && !leaves.length && !swaps.length){ m.innerHTML = `<div class="menuhead sub">Inga nya notiser</div>`; return; }
+  const swHtml = swaps.map(s=>{
+    const g = (s.giver && s.giver.name) || "?", t = (s.taker && s.taker.name) || "?";
+    const d = new Date(s.work_date + "T00:00:00");
+    const when = `${((s.rs_task && s.rs_task.name) || "arbetspass")} ${d.getDate()}/${d.getMonth()+1}`;
+    const meta = `<div class="meta2">${esc(when)}${s.note?` · ${esc(s.note)}`:""}</div>
+      <div class="meta2">${esc((s.stable && s.stable.name) || "")}</div>`;
+    if(s.status === "pending"){
+      const txt = s.asked_by === "giver"
+        ? `🔁 <b>${esc(g)}</b> erbjuder dig sitt arbetspass`
+        : `🔁 <b>${esc(t)}</b> vill ta över ditt arbetspass`;
+      return `<div class="notif"><div>${txt}</div>${meta}
+        <div class="notifbtns"><button class="btn primary sm" data-swacc="${s.id}">${s.asked_by === "giver" ? "Ta över" : "Ja, byt"}</button><button class="btn sm" data-swdec="${s.id}">Avböj</button></div></div>`;
+    }
+    return `<div class="notif"><div>🔁 Passbyte att godkänna: <b>${esc(g)}</b> → <b>${esc(t)}</b></div>${meta}
+      <div class="notifbtns"><button class="btn primary sm" data-swok="${s.id}">Godkänn</button><button class="btn sm" data-swno="${s.id}">Neka</button></div></div>`;
+  }).join("");
   const lvHtml = leaves.map(x=>{
     const sd = new Date(x.start_date+"T00:00:00"), ed = new Date(x.end_date+"T00:00:00");
     return `<div class="notif"><div>📅 <b>${esc((x.rs_staff&&x.rs_staff.name)||"Personal")}</b> ansöker om ${esc(x.kind)} ${sd.getDate()}/${sd.getMonth()+1}–${ed.getDate()}/${ed.getMonth()+1}</div>
@@ -1511,12 +1544,16 @@ async function openBellMenu(){
       : v.kind === "inv_accepted" ? "✅ Inbjudan accepterad:"
       : v.kind === "inv_declined" ? "❌ Inbjudan avböjd:"
       : v.kind === "leave_approved" ? "✅ Ledighet beviljad:"
-      : v.kind === "leave_denied" ? "❌ Ledighet avslagen:" : "🕐";
+      : v.kind === "leave_denied" ? "❌ Ledighet avslagen:"
+      : v.kind === "swap_declined" ? "❌ Passbytet avböjdes:"
+      : v.kind === "swap_wait" ? "🔁 Kollegan tackade ja — väntar på godkännande:"
+      : v.kind === "swap_approved" ? "✅ Passbytet är godkänt:"
+      : v.kind === "swap_denied" ? "❌ Passbytet nekades:" : "🕐";
     return `<div class="notif"><div>${pfx} <b>${esc(v.task_name)}</b></div>
       <div class="meta2">${esc((v.stable&&v.stable.name)||"")}</div>
       <div class="notifbtns"><button class="btn sm" data-tnok="${v.id}">Ok</button></div></div>`;
   }).join("");
-  const invHtml = lvHtml + tnHtml + invs.map(v=>
+  const invHtml = lvHtml + swHtml + tnHtml + invs.map(v=>
     `<div class="notif"><div>📩 <b>${esc(v.invited_by)}</b> har bjudit in dig till stallet <b>${esc((v.stable&&v.stable.name)||"?")}</b></div>
       <div class="meta2">Som ${esc(inviteRoleLabel(v))}</div>
       <div class="notifbtns"><button class="btn primary sm" data-invacc="${v.id}">Acceptera</button><button class="btn sm" data-invdec="${v.id}">Avböj</button></div></div>`).join("");
@@ -1569,6 +1606,10 @@ async function openBellMenu(){
   });
   m.querySelectorAll("[data-lvacc]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveLeave(b.getAttribute("data-lvacc"), true); });
   m.querySelectorAll("[data-lvdec]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); resolveLeave(b.getAttribute("data-lvdec"), false); });
+  bindSwapButtons(m, ()=>{
+    openBellMenu();
+    if(view.name === "schedule" || view.name === "mine" || view.name === "requests") render();
+  });
 }
 function namePromptDialog(){
   return new Promise(res=>{
@@ -1873,6 +1914,17 @@ async function renderMyLessons(stableId){
     const tISO = isoDate(today);
     const endD = new Date(today); endD.setDate(endD.getDate()+27);
     const endISO = isoDate(endD);
+    // passbyten: mina egna (alla statusar, för listan) + veckornas gällande byten (påverkar vad jag jobbar)
+    const sq = await db.from("rs_task_swap").select("*").eq("stable_id", stableId).order("created_at",{ascending:false}).limit(200);
+    const swAllRows = sq.error?[]:sq.data;
+    // listan visar kommande byten och allt som fortfarande väntar på svar (hela historiken finns i Mina förfrågningar)
+    const swMine = swAllRows.filter(s=> (myStaff.has(s.giver_staff) || myStaff.has(s.taker_staff))
+      && (s.work_date >= tISO || s.status === "pending"));
+    const swWin = swAllRows.filter(s=> s.work_date >= tISO && s.work_date <= endISO && s.status !== "declined");
+    const passTasks = relTasks.concat(tasks.filter(t2=> !relTasks.some(x=> x.id === t2.id)
+      && swWin.some(s=> s.task_id === t2.id && swapActive(s) && myStaff.has(s.taker_staff))));
+    const alq = await db.from("rs_leave").select("*").eq("status","approved").lte("start_date", endISO).gte("end_date", tISO);
+    const allLeave = alq.error?[]:alq.data;
     let asg = [], abs = [], notes = [], tAbs = [];
     if(rel.length){
       const ids = rel.map(x=> x.id);
@@ -1883,8 +1935,8 @@ async function renderMyLessons(stableId){
       ]);
       asg = aq.error?[]:aq.data; abs = bq.error?[]:bq.data; notes = nq.error?[]:nq.data;
     }
-    if(relTasks.length){
-      const tq = await db.from("rs_task_absence").select("*").in("task_id", relTasks.map(x=> x.id)).gte("work_date", tISO).lte("work_date", endISO);
+    if(passTasks.length){
+      const tq = await db.from("rs_task_absence").select("*").in("task_id", passTasks.map(x=> x.id)).gte("work_date", tISO).lte("work_date", endISO);
       tAbs = tq.error?[]:tq.data;
     }
     let myLeaves = [];
@@ -1892,26 +1944,42 @@ async function renderMyLessons(stableId){
       const lq2 = await db.from("rs_leave").select("*").in("staff_id", [...myStaff]).order("created_at",{ascending:false});
       myLeaves = lq2.error?[]:lq2.data;
     }
-    if(mlTab === null) mlTab = (!rel.length && relTasks.length) ? "pass" : "lek";
+    if(mlTab === null) mlTab = (!rel.length && passTasks.length) ? "pass" : "lek";
     let html = "";
     for(let i=0;i<28;i++){
       const d = new Date(today); d.setDate(d.getDate()+i);
       const wd = ((d.getDay()+6)%7)+1;
       const dayRel = mlTab === "lek" ? rel.filter(gr=> gr.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b)) : [];
-      const dayTasks = mlTab === "pass" ? relTasks.filter(t2=> t2.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b)) : [];
+      const dayTasks = mlTab === "pass" ? passTasks.filter(t2=> t2.weekday === wd).sort((a,b)=> timeKey(a)-timeKey(b)) : [];
       if(!dayRel.length && !dayTasks.length) continue;
       const dISO = isoDate(d);
       html += `<div class="sublabel" style="margin-top:16px">${RS_WD[wd]} ${d.getDate()}/${d.getMonth()+1}${dISO===tISO?' · <span style="color:var(--accent)">idag</span>':""}</div>`;
       dayTasks.forEach(t2=>{
-        const myOn = taskStaff.filter(x=> x.task_id===t2.id && myStaff.has(x.staff_id));
-        const trows = myOn.map(x=>{
-          const f = staff.find(y=> y.id===x.staff_id); if(!f) return "";
+        const sw = swWin.filter(s=> s.task_id===t2.id && s.work_date===dISO);
+        const swA = sw.filter(swapActive);
+        const baseIds = taskStaff.filter(x=> x.task_id===t2.id).map(x=> x.staff_id);
+        const eff = taskEffectiveStaff(baseIds, swA);
+        // mina rader: de av mina personal-id som jobbar passet den dagen, plus dem jag bytt bort (så bytet syns)
+        const myRowIds = [...new Set([...baseIds, ...eff])].filter(id=> myStaff.has(id));
+        if(!myRowIds.length) return;
+        const trows = myRowIds.map(id=>{
+          const f = staff.find(y=> y.id===id); if(!f) return "";
+          const gaveAway = swA.find(s=> s.giver_staff===id);
+          if(gaveAway && !eff.has(id)){
+            const to = (staff.find(y=> y.id===gaveAway.taker_staff)||{}).name || "en kollega";
+            return `<div class="scsrow scssick"><span class="scsname">${esc(f.name)}</span><span class="tagpill st-no" title="Bytt bort till ${esc(to)}">bytt bort</span></div>`;
+          }
+          const swappedIn = !baseIds.includes(id) ? ` <span class="tagpill">inbytt</span>` : "";
           const sick = tAbs.some(y=> y.task_id===t2.id && y.work_date===dISO && y.staff_id===f.id);
           const sickBit = sick
             ? `<span class="tagpill st-no" data-mltunsick="${t2.id}|${dISO}|${f.id}" style="cursor:pointer" title="Ta bort sjukanmälan">sjuk</span>`
             : `<button class="btn sm" data-mltsick="${t2.id}|${dISO}|${f.id}">Sjukanmäl</button>`;
-          return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(f.name)}</span>${sickBit}</div>`;
+          const waiting = sw.some(s=> swapWaiting(s) && (s.giver_staff===id || s.taker_staff===id));
+          const giveBit = (!sick && !waiting) ? `<button class="btn sm" data-mlswap="${t2.id}|${dISO}|${f.id}">Erbjud bort</button>` : "";
+          return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(f.name)}${swappedIn}</span>${giveBit}${sickBit}</div>`;
         }).join("");
+        const swNotes = sw.map(s=> swapNote(s, { name: id=> ((staff.find(y=> y.id===id)||{}).name || "?"),
+          mineIds: myStaff, isChef: false, canCancel: true })).join("");
         html += `<div class="card taskcard">
           <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
             <b>${esc(t2.name)}</b>
@@ -1920,6 +1988,7 @@ async function renderMyLessons(stableId){
           </div>
           ${t2.description?`<div class="meta2" style="margin-top:4px">${esc(t2.description)}</div>`:""}
           <div style="margin-top:8px">${trows}</div>
+          ${swNotes ? `<div style="margin-top:8px">${swNotes}</div>` : ""}
         </div>`;
       });
       dayRel.forEach(gr=>{
@@ -1961,6 +2030,25 @@ async function renderMyLessons(stableId){
       }).join("") || `<div class="meta2">Inga ansökningar än.</div>`}
       <div style="margin-top:10px"><button class="btn sm" id="mlLeaveBtn">+ Ansök om ledighet</button></div>
     </div>` : "";
+    const swapSec = (mlTab === "pass" && myStaff.size) ? `<div class="card">
+      <div class="sublabel" style="margin-bottom:6px">Passbyten</div>
+      ${swMine.map(s=>{
+        const tn = ((tasks.find(x=> x.id===s.task_id))||{}).name || "arbetspass";
+        const gn = ((staff.find(x=> x.id===s.giver_staff))||{}).name || "?";
+        const tkn = ((staff.find(x=> x.id===s.taker_staff))||{}).name || "?";
+        const stTag = s.status === "declined" ? `<span class="tagpill st-no">avböjd</span>`
+          : s.chef_status === "denied" ? `<span class="tagpill st-no">nekad</span>`
+          : swapActive(s) ? `<span class="tagpill">godkänd</span>`
+          : s.status === "pending" ? `<span class="tagpill st-pend">väntar på svar</span>`
+          : `<span class="tagpill st-pend">väntar på godkännande</span>`;
+        const iAmRecip = myStaff.has(swapRecipient(s));
+        const btns = s.status !== "pending" ? ""
+          : iAmRecip
+            ? `<button class="btn primary sm" data-swacc="${s.id}">${s.asked_by === "giver" ? "Ta över" : "Ja, byt"}</button><button class="btn sm" data-swdec="${s.id}">Avböj</button>`
+            : `<button class="btn sm" data-swdel="${s.id}">Ångra</button>`;
+        return `<div class="scsrow"><span class="scsname" style="font-weight:500">${esc(tn)} ${fmtD(s.work_date)} <span class="meta2">· ${esc(gn)} → ${esc(tkn)}</span></span>${stTag}${btns}</div>`;
+      }).join("") || `<div class="meta2">Inga passbyten än. Erbjud bort ett pass med knappen i passet nedan.</div>`}
+    </div>` : "";
     el("mineShell").innerHTML = `
       <div class="card schedtop"><div class="schedeyebrow">${mlTab==="pass"?"Mina arbetspass":"Mina lektioner"}</div><h1 class="schedname">${esc(st.data.name)}</h1>
         <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap">
@@ -1968,11 +2056,25 @@ async function renderMyLessons(stableId){
           <button class="btn sm${mlTab==="pass"?" primary":""}" id="mlTabPass">Mina arbetspass</button>
         </div></div>
       ${leaveSec}
+      ${swapSec}
       ${html || `<div class="card"><div class="empty">${mlTab==="pass"?"Inga kommande arbetspass för dig de närmaste fyra veckorna.":"Inga kommande lektioner för dig de närmaste fyra veckorna."}</div></div>`}`;
     el("mlTabLek").onclick = ()=>{ if(mlTab!=="lek"){ mlTab = "lek"; renderMyLessons(stableId); } };
     el("mlTabPass").onclick = ()=>{ if(mlTab!=="pass"){ mlTab = "pass"; renderMyLessons(stableId); } };
     const lb = el("mlLeaveBtn");
     if(lb) lb.onclick = ()=> leaveDialog(stableId, [...myStaff][0], ()=> renderMyLessons(stableId));
+    document.querySelectorAll("[data-mlswap]").forEach(b=> b.onclick = ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-mlswap").split("|");
+      const t2 = tasks.find(x=> x.id === tid);
+      const baseIds = taskStaff.filter(x=> x.task_id === tid).map(x=> x.staff_id);
+      const eff = taskEffectiveStaff(baseIds, swWin.filter(s=> s.task_id===tid && s.work_date===dI && swapActive(s)));
+      const cands = staff.filter(f=> !eff.has(f.id)).map(f=>{
+        const lv = allLeave.find(x=> x.staff_id===f.id && x.start_date <= dI && x.end_date >= dI);
+        return { id: f.id, name: f.name, busy: lv ? lv.kind : "" };
+      });
+      swapDialog("give", { stableId, taskId: tid, taskName: t2 ? t2.name : "arbetspass", dISO: dI, giverId: fid,
+        candidates: cands, done: ()=> renderMyLessons(stableId) });
+    });
+    bindSwapButtons(document, ()=> renderMyLessons(stableId));
     document.querySelectorAll("[data-lvdel]").forEach(b=> b.onclick = async ()=>{
       if(!(await confirmDialog("Ångra ansökan?", { okText:"Ja, ångra" }))) return;
       await db.from("rs_leave").delete().eq("id", b.getAttribute("data-lvdel"));
@@ -2176,10 +2278,36 @@ async function renderRequests(stableId){
       return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow"><b>${esc(v.invited_by)}</b> bjöd in dig till <b>${esc((v.stable&&v.stable.name)||"?")}</b> som ${esc(inviteRoleLabel(v))}</div>${stTag}</div>
         <div class="meta2">${cd?`Skickad ${cd.getDate()}/${cd.getMonth()+1}`:""}</div>${btns}</div>`;
     }).join("") : "";
+    // Passbyten på arbetspass (ridskolan) — både mina skickade och de jag fått
+    const swq2 = await db.from("rs_task_swap").select(SWAP_SEL).eq("stable_id", stableId).order("created_at",{ascending:false}).limit(100);
+    const swRows = (swq2.error ? [] : (swq2.data||[]))
+      .filter(s=> swEmails(s.giver).concat(swEmails(s.taker)).includes(session.email));
+    const swList = swRows.map(s=>{
+      const g = (s.giver && s.giver.name) || "?", t = (s.taker && s.taker.name) || "?";
+      const tn = (s.rs_task && s.rs_task.name) || "arbetspass";
+      const d = new Date(s.work_date + "T00:00:00");
+      const iAmRecip = swEmails(s.asked_by === "giver" ? s.taker : s.giver).includes(session.email);
+      const txt = s.asked_by === "giver"
+        ? (iAmRecip ? `<b>${esc(g)}</b> erbjuder dig sitt arbetspass` : `Du erbjöd <b>${esc(t)}</b> ditt arbetspass`)
+        : (iAmRecip ? `<b>${esc(t)}</b> vill ta över ditt arbetspass` : `Du frågade <b>${esc(g)}</b> om att ta över deras arbetspass`);
+      const stTag = s.status === "declined" ? `<span class="tagpill st-no">avböjd</span>`
+        : s.chef_status === "denied" ? `<span class="tagpill st-no">nekad</span>`
+        : swapActive(s) ? `<span class="tagpill">godkänd</span>`
+        : s.status === "pending" ? `<span class="tagpill st-pend">väntar på svar</span>`
+        : `<span class="tagpill st-pend">väntar på godkännande</span>`;
+      const btns = s.status !== "pending" ? ""
+        : iAmRecip
+          ? `<div class="notifbtns"><button class="btn primary sm" data-swacc="${s.id}">${s.asked_by === "giver" ? "Ta över" : "Ja, byt"}</button><button class="btn sm" data-swdec="${s.id}">Avböj</button></div>`
+          : `<div class="notifbtns"><button class="btn sm" data-swdel="${s.id}">Ångra</button></div>`;
+      return `<div class="notif"><div style="display:flex;align-items:center;gap:8px"><div class="grow">${txt}</div>${stTag}</div>
+        <div class="meta2">${esc(tn)} · ${RS_WD[((d.getDay()+6)%7)+1]} ${d.getDate()}/${d.getMonth()+1}${s.note?` · ${esc(s.note)}`:""}</div>${btns}</div>`;
+    }).join("");
     el("reqShell").innerHTML = `
       <div class="card schedtop"><div class="schedeyebrow">Mina förfrågningar</div><h1 class="schedname">${esc(st.data.name)}</h1></div>
       ${invList?`<div class="card"><div class="sublabel" style="margin-bottom:8px">Inbjudningar</div>${invList}</div>`:""}
-      <div class="card">${list}</div>`;
+      ${swList?`<div class="card"><div class="sublabel" style="margin-bottom:8px">Passbyten (arbetspass)</div>${swList}</div>`:""}
+      ${st.data.kind === "ridskola" && !mine.length ? "" : `<div class="card">${list}</div>`}`;
+    bindSwapButtons(document, ()=> renderRequests(stableId));
     document.querySelectorAll("[data-racc]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-racc"), true); renderRequests(stableId); });
     document.querySelectorAll("[data-rdec]").forEach(b=> b.onclick = async ()=>{ await resolveRequest(b.getAttribute("data-rdec"), false); renderRequests(stableId); });
     document.querySelectorAll("[data-ivacc]").forEach(b=> b.onclick = async ()=>{ const id=b.getAttribute("data-ivacc"); await resolveInvite(id, true, myInv.find(v=> v.id===id)); renderRequests(stableId); });
@@ -2362,7 +2490,120 @@ function scMineLesson(g){
 }
 function scMineTask(t){
   const mf = rsMyStaffIds();
-  return (scData.taskStaff||[]).some(x=> x.task_id===t.id && mf.has(x.staff_id));
+  return (scData.taskStaff||[]).some(x=> x.task_id===t.id && mf.has(x.staff_id))
+      || (scWeekSwap||[]).some(s=> s.task_id===t.id && swapActive(s) && mf.has(s.taker_staff));
+}
+
+/* ---- Passbyten på arbetspass ----
+   Ett godkänt byte flyttar passet bara det datumet — arbetspasset
+   (rs_task_staff) står kvar orört. Flödet: någon erbjuder bort sitt pass
+   (eller ber om att ta över någons), kollegan svarar i klockan och
+   chef/admin godkänner — om inte frågan redan kom från en chef. */
+function swapActive(s){ return s.status === "accepted" && s.chef_status === "approved"; }
+function swapWaiting(s){ return s.status === "pending" || (s.status === "accepted" && s.chef_status === "pending"); }
+function swapRecipient(s){ return s.asked_by === "giver" ? s.taker_staff : s.giver_staff; }
+/* Vilka jobbar passet ett visst datum: personalen, minus bortbytta plus inbytta (i tidsordning) */
+function taskEffectiveStaff(baseIds, activeSwaps){
+  const out = new Set(baseIds);
+  [...activeSwaps].sort((a,b)=> (a.created_at||"") < (b.created_at||"") ? -1 : 1)
+    .forEach(s=>{ out.delete(s.giver_staff); out.add(s.taker_staff); });
+  return out;
+}
+function swapAsker(s){ return s.asked_by === "giver" ? s.giver_staff : s.taker_staff; }
+
+/* Text + knappar för ett passbyte. ctx: {name(id), mineIds:Set, isChef, canCancel} */
+function swapNote(s, ctx){
+  const g = ctx.name(s.giver_staff), t = ctx.name(s.taker_staff);
+  const iAmRecipient = ctx.mineIds.has(swapRecipient(s));
+  const iAmAsker = ctx.mineIds.has(swapAsker(s));
+  let txt, btns = "";
+  if(s.status === "pending"){
+    txt = s.asked_by === "giver"
+      ? `<b>${esc(g)}</b> vill ge bort passet till <b>${esc(t)}</b> — väntar på svar`
+      : `<b>${esc(t)}</b> vill ta över <b>${esc(g)}</b>s pass — väntar på svar`;
+    if(iAmRecipient) btns = `<button class="btn primary sm" data-swacc="${s.id}">${s.asked_by === "giver" ? "Ta över passet" : "Ja, byt"}</button><button class="btn sm" data-swdec="${s.id}">Avböj</button>`;
+    else if(iAmAsker && ctx.canCancel) btns = `<button class="btn sm" data-swdel="${s.id}">Ångra</button>`;
+  } else if(s.status === "accepted" && s.chef_status === "pending"){
+    txt = `Passbyte <b>${esc(g)}</b> → <b>${esc(t)}</b> — väntar på godkännande`;
+    if(ctx.isChef && !iAmRecipient && !iAmAsker) btns = `<button class="btn primary sm" data-swok="${s.id}">Godkänn</button><button class="btn sm" data-swno="${s.id}">Neka</button>`;
+  } else if(swapActive(s)){
+    txt = `Passbyte <b>${esc(g)}</b> → <b>${esc(t)}</b> · godkänt`;
+  } else return "";
+  return `<div class="swapnote">🔁 ${txt}${s.note?`<div class="meta2">${esc(s.note)}</div>`:""}${btns?`<div class="notifbtns">${btns}</div>`:""}</div>`;
+}
+
+async function respondSwap(id, accept){
+  const r = await db.rpc("respond_task_swap", { p_swap: id, p_accept: accept });
+  if(r.error){ alert(r.error.message + " (har db/passbyte.sql körts?)"); return false; }
+  await refreshBellCount();
+  return true;
+}
+async function approveSwap(id, ok){
+  const r = await db.rpc("approve_task_swap", { p_swap: id, p_approve: ok });
+  if(r.error){ alert(r.error.message); return false; }
+  await refreshBellCount();
+  return true;
+}
+async function cancelSwap(id){
+  if(!(await confirmDialog("Ångra förfrågan om passbyte?", { okText:"Ja, ångra" }))) return false;
+  const r = await db.from("rs_task_swap").delete().eq("id", id);
+  if(r.error){ alert("Kunde inte ångra: " + r.error.message); return false; }
+  await refreshBellCount();
+  return true;
+}
+/* Kopplar knapparna i swapNote var de än renderas (schemapanel, Mina arbetspass, klockan, förfrågningar) */
+function bindSwapButtons(host, after){
+  const go = async fn=>{ if(await fn()) { if(after) after(); } };
+  const wire = (attr, fn)=> host.querySelectorAll("["+attr+"]").forEach(b=> b.onclick = (e)=>{
+    e.stopPropagation(); go(()=> fn(b.getAttribute(attr)));
+  });
+  wire("data-swacc", id=> respondSwap(id, true));
+  wire("data-swdec", id=> respondSwap(id, false));
+  wire("data-swok",  id=> approveSwap(id, true));
+  wire("data-swno",  id=> approveSwap(id, false));
+  wire("data-swdel", id=> cancelSwap(id));
+}
+
+/* Erbjud bort passet (mode "give") eller be om att ta över det (mode "take") */
+function swapDialog(mode, o){
+  const ov = document.createElement("div"); ov.className = "modal-ov";
+  const d = new Date(o.dISO + "T00:00:00");
+  const when = `${RS_WD[((d.getDay()+6)%7)+1].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}`;
+  const pick = mode === "give"
+    ? `<div class="field"><label class="fld">Vem erbjuder du passet till?</label>
+         <select id="sw_to">${o.candidates.map(c=> `<option value="${c.id}">${esc(c.name)}${c.busy?" · "+esc(c.busy):""}</option>`).join("")}</select></div>`
+    : "";
+  ov.innerHTML = `<div class="modal"><h3>${mode === "give" ? "Erbjud bort passet" : "Ta över passet"}</h3>
+    <p>${esc(o.taskName)} · ${esc(when)}${mode === "take" ? ` — passet är <b>${esc(o.giverName)}</b>s` : ""}</p>
+    ${mode === "give" && !o.candidates.length ? `<div class="msg warn">Ingen annan personal att erbjuda passet till.</div>` : pick}
+    <div class="field"><label class="fld">Meddelande (valfritt)</label><input type="text" id="sw_note" maxlength="120"></div>
+    <div id="sw_msg"></div>
+    <div class="modal-btns"><button class="btn" id="sw_cancel">Avbryt</button>
+      ${mode === "give" && !o.candidates.length ? "" : `<button class="btn primary" id="sw_send">Skicka förfrågan</button>`}</div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#sw_cancel").onclick = ()=> ov.remove();
+  const send = ov.querySelector("#sw_send");
+  if(send) send.onclick = async ()=>{
+    const takerId = mode === "give" ? el("sw_to").value : o.takerId;
+    const giverId = o.giverId;
+    if(!takerId || !giverId || takerId === giverId){ el("sw_msg").innerHTML = msg("Välj en annan person.", "err"); return; }
+    const r = await db.from("rs_task_swap").insert({ stable_id: o.stableId, task_id: o.taskId, work_date: o.dISO,
+      giver_staff: giverId, taker_staff: takerId, asked_by: mode === "give" ? "giver" : "taker",
+      note: (el("sw_note").value||"").trim() || null });
+    if(r.error){
+      const dup = (r.error.code === "23505") || /duplicate/i.test(r.error.message||"");
+      el("sw_msg").innerHTML = msg(dup ? "Det finns redan en väntande förfrågan om det här passet."
+        : "Kunde inte skicka: " + r.error.message + " (har db/passbyte.sql körts?)", "err");
+      return;
+    }
+    ov.remove();
+    await refreshBellCount();
+    const toName = mode === "give"
+      ? ((o.candidates.find(c=> c.id === takerId)||{}).name || "kollegan")
+      : o.giverName;
+    infoDialog(`Förfrågan är skickad till ${toName}. De svarar i sin notisklocka, och sedan godkänner chef eller admin bytet.`, "Förfrågan skickad");
+    if(o.done) o.done();
+  };
 }
 /* Arbetstidsvarningar för ett arbetspass: för långt pass, dubbelbokning och dygnsvila under 11 h */
 function taskWorkWarnings(tk){
@@ -3245,7 +3486,7 @@ let scDayOff = 0;                // vald dag i dagvyn (0=måndag)
 let scMonthDate = null;          // första dagen i månadsvyns månad
 let scOnlyMine = false;          // visa bara det som rör mig
 let scSel = null;                // valt block: {type:"les"|"task", id, wd}
-let scWeekAsg = [], scWeekAbs = [], scWeekNotes = [], scWeekTAbs = [], scWeekLeave = [];   // veckans tilldelningar, sjukanmälningar, planeringar, beviljad ledighet
+let scWeekAsg = [], scWeekAbs = [], scWeekNotes = [], scWeekTAbs = [], scWeekLeave = [], scWeekSwap = [];   // veckans tilldelningar, sjukanmälningar, planeringar, beviljad ledighet, passbyten
 let scNoteOpen = false;               // planerings-textrutan utfälld i panelen?
 
 async function renderSchoolSchedule(stableId){
@@ -3369,13 +3610,15 @@ async function drawSchoolWeek(){
     scWeekAsg = aq.error?[]:aq.data; scWeekAbs = bq.error?[]:bq.data; scWeekNotes = nq.error?[]:nq.data;
   }
   if(scSchedMode === "tasks" && (scData.tasks||[]).length){
-    const [tq, lq] = await Promise.all([
+    const [tq, lq, sq] = await Promise.all([
       db.from("rs_task_absence").select("*").in("task_id", scData.tasks.map(t=> t.id)).gte("work_date", startISO).lte("work_date", endISO),
-      db.from("rs_leave").select("*").eq("status","approved").lte("start_date", endISO).gte("end_date", startISO)
+      db.from("rs_leave").select("*").eq("status","approved").lte("start_date", endISO).gte("end_date", startISO),
+      db.from("rs_task_swap").select("*").in("task_id", scData.tasks.map(t=> t.id)).gte("work_date", startISO).lte("work_date", endISO).neq("status","declined")
     ]);
     scWeekTAbs = tq.error?[]:tq.data;
     scWeekLeave = lq.error?[]:lq.data;
-  } else scWeekLeave = [];
+    scWeekSwap = sq.error?[]:sq.data;
+  } else { scWeekLeave = []; scWeekSwap = []; }
   let items = scSchedMode === "lessons"
     ? scData.groups.map(g=> ({ type:"les", o:g, wd:g.weekday, start:timeKey(g), dur:g.duration_min||60 }))
     : (scData.tasks||[]).map(t=> ({ type:"task", o:t, wd:t.weekday, start:timeKey(t), dur:t.duration_min||60 }));
@@ -3530,19 +3773,57 @@ function drawScsDetail(){
     const tStaff = (scData.taskStaff||[]).filter(x=> x.task_id === tk.id)
       .map(x=> (scData.staff||[]).find(f=> f.id === x.staff_id)).filter(Boolean);
     const wWarns = taskWorkWarnings(tk);
-    const rows = tStaff.map(f=>{
+    const staffById = id=> (scData.staff||[]).find(f=> f.id === id);
+    const staffName = id=> (staffById(id)||{}).name || "?";
+    const swAll = (scWeekSwap||[]).filter(s=> s.task_id === tk.id && s.work_date === dISO);
+    const swAct = swAll.filter(swapActive);
+    const baseIds = tStaff.map(f=> f.id);
+    const eff = taskEffectiveStaff(baseIds, swAct);
+    const extra = [...eff].filter(id=> !baseIds.includes(id)).map(staffById).filter(Boolean);
+    const clashes = (fid, other)=>{
+      const s1 = timeKey(tk), e1 = s1 + (tk.duration_min||60);
+      const s2 = timeKey(other), e2 = s2 + (other.duration_min||60);
+      return other.id !== tk.id && other.weekday === tk.weekday && s1 < e2 && s2 < e1;
+    };
+    const otherTasksFor = fid=> (scData.taskStaff||[]).filter(x=> x.staff_id === fid)
+      .map(x=> (scData.tasks||[]).find(t2=> t2.id === x.task_id)).filter(Boolean);
+    extra.forEach(f=> otherTasksFor(f.id).forEach(o=>{
+      if(clashes(f.id, o)) wWarns.push(`${f.name} är inbytt här men har redan ${o.name} (${o.start_time}–${rsEndTime(o.start_time, o.duration_min)}) samma dag`);
+    }));
+    const waitingFor = fid=> swAll.some(s=> swapWaiting(s) && (s.giver_staff === fid || s.taker_staff === fid));
+    const canSwapNow = myStaff.size > 0 && dISO >= tISO;
+    const rows = [...tStaff, ...extra].map(f=>{
+      const mine = myStaff.has(f.id);
+      const mineBit = mine ? ` <span class="tagpill">du</span>` : "";
+      const gaveAway = swAct.find(s=> s.giver_staff === f.id);
+      if(gaveAway && !eff.has(f.id)){
+        return `<div class="scsrow scssick"><span class="scsname">${esc(f.name)}${mineBit}</span><span class="tagpill st-no" title="Bytt bort till ${esc(staffName(gaveAway.taker_staff))}">bytt bort</span></div>`;
+      }
+      const swappedIn = !baseIds.includes(f.id) ? ` <span class="tagpill">inbytt</span>` : "";
       const onLeave = scWeekLeave.find(x=> x.staff_id===f.id && x.start_date <= dISO && x.end_date >= dISO);
       if(onLeave){
         wWarns.push(`${f.name} har beviljad ${onLeave.kind} det här datumet — passet kan behöva täckas`);
-        return `<div class="scsrow scssick"><span class="scsname">${esc(f.name)}${myStaff.has(f.id)?` <span class="tagpill">du</span>`:""}</span><span class="tagpill st-no" title="Beviljad ${esc(onLeave.kind)}">ledig</span></div>`;
+        return `<div class="scsrow scssick"><span class="scsname">${esc(f.name)}${mineBit}${swappedIn}</span><span class="tagpill st-no" title="Beviljad ${esc(onLeave.kind)}">ledig</span></div>`;
       }
       const sick = scWeekTAbs.some(x=> x.task_id===tk.id && x.work_date===dISO && x.staff_id===f.id);
-      const mine = myStaff.has(f.id);
       const sickBit = sick
         ? `<span class="tagpill st-no" ${mine||canT?`data-tunsick="${tk.id}|${dISO}|${f.id}" style="cursor:pointer" title="Ta bort sjukanmälan"`:""}>sjuk</span>`
         : ((mine || canT) && dISO >= tISO ? `<button class="btn sm" data-tsick="${tk.id}|${dISO}|${f.id}">Sjukanmäl</button>` : "");
-      return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(f.name)}${mine?` <span class="tagpill">du</span>`:""}</span>${sickBit}</div>`;
+      let swapBit = "";
+      if(canSwapNow && !sick && !waitingFor(f.id)){
+        if(mine) swapBit = `<button class="btn sm" data-swgive="${tk.id}|${dISO}|${f.id}">Erbjud bort</button>`;
+        else swapBit = `<button class="btn sm" data-swtake="${tk.id}|${dISO}|${f.id}">Ta över</button>`;
+      }
+      return `<div class="scsrow${sick?" scssick":""}"><span class="scsname">${esc(f.name)}${mineBit}${swappedIn}</span>${swapBit}${sickBit}</div>`;
     }).join("");
+    const swCtx = { name: staffName, mineIds: myStaff, isChef: canT, canCancel: true };
+    const swHtml = swAll.map(s=> swapNote(s, swCtx)).join("");
+    const swapCandidates = ()=> (scData.staff||[]).filter(f=> !eff.has(f.id)).map(f=>{
+      const lv = scWeekLeave.find(x=> x.staff_id===f.id && x.start_date <= dISO && x.end_date >= dISO);
+      let busy = lv ? lv.kind : "";
+      if(!busy && otherTasksFor(f.id).some(o=> clashes(f.id, o))) busy = "har annat pass";
+      return { id: f.id, name: f.name, busy };
+    });
     host.innerHTML = `<div class="card">
       <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
         <b>${esc(tk.name)}</b>
@@ -3554,7 +3835,19 @@ function drawScsDetail(){
       <div style="margin-top:10px"><b style="font-size:.85rem">Personal</b>
         ${rows || `<div class="msg warn" style="margin-top:6px">⚠ Ingen personal tilldelad än — lägg till under Inställningar → Arbetspass.</div>`}
       </div>
+      ${swHtml ? `<div style="margin-top:10px">${swHtml}</div>` : ""}
     </div>`;
+    host.querySelectorAll("[data-swgive]").forEach(b=> b.onclick = ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-swgive").split("|");
+      swapDialog("give", { stableId: scStableId, taskId: tid, taskName: tk.name, dISO: dI, giverId: fid,
+        candidates: swapCandidates(), done: ()=> renderSchoolSchedule(scStableId) });
+    });
+    host.querySelectorAll("[data-swtake]").forEach(b=> b.onclick = ()=>{
+      const [tid, dI, fid] = b.getAttribute("data-swtake").split("|");
+      swapDialog("take", { stableId: scStableId, taskId: tid, taskName: tk.name, dISO: dI, giverId: fid,
+        giverName: staffName(fid), takerId: [...myStaff][0], done: ()=> renderSchoolSchedule(scStableId) });
+    });
+    bindSwapButtons(host, ()=> renderSchoolSchedule(scStableId));
     host.querySelectorAll("[data-tsick]").forEach(b=> b.onclick = async ()=>{
       const [tid, dI, fid] = b.getAttribute("data-tsick").split("|");
       const f = (scData.staff||[]).find(x=> x.id === fid);
