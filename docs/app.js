@@ -376,7 +376,9 @@ async function loadMyStables(){
       const s = r.rs_instructor && r.rs_instructor.stable; if(!s || map.has(s.id)) return;
       map.set(s.id, { id:s.id, name:s.name, kind:s.kind||"stall", orgId:s.org_id, orgName:(s.org&&s.org.name)||s.name, isAdmin:false });
     });
-    return [...map.values()];
+    const units = [...map.values()];
+    iAmAdminSomewhere = units.some(u=> u.isAdmin);   // håll "Visa som"-behörigheten aktuell
+    return units;
   }
   // Fallback (om db/org.sql inte körts än): gamla platta modellen
   const admin = await db.from("stable_admin").select("stable(*)").eq("email", session.email);
@@ -444,6 +446,14 @@ async function renderStable(stableId){
 
 let curPerm = "member";   // roll i ridskolan som visas: admin | teacher | chef | member
 let permView = null;      // admins "Visa som"-förhandsgranskning: teacher | chef | member | null
+let iAmAdminSomewhere = false;   // bara admins ser "Visa som" — inbjuden personal ska inte kunna byta vy
+async function refreshAdminFlag(){
+  if(!session){ iAmAdminSomewhere = false; permView = null; return false; }
+  const r = await db.from("org_admin").select("org_id").eq("email", session.email).limit(1);
+  iAmAdminSomewhere = !r.error && (r.data||[]).length > 0;
+  if(!iAmAdminSomewhere && permView){ permView = null; renderViewAsBar(); }
+  return iAmAdminSomewhere;
+}
 async function mySchoolPerm(stableId){
   const r = await db.rpc("my_school_perm", { sid: stableId });
   const real = (!r.error && r.data) ? r.data : ((await amIAdmin(stableId)) ? "admin" : "member");
@@ -1297,7 +1307,7 @@ function buildProfileMenu(){
     <button class="menuitem" data-act="newstable">${ic("plus")} Nytt stall</button>
     <button class="menuitem" data-act="invite">${ic("mail")} Bjud in till stallet</button>
     <button class="menuitem" data-act="chmail">${ic("pencil")} Byt mejladress</button>
-    <button class="menuitem" data-act="viewas">${ic("user")} Visa som …</button>
+    ${iAmAdminSomewhere ? `<button class="menuitem" data-act="viewas">${ic("user")} Visa som …</button>` : ""}
     <button class="menuitem" data-act="logout">${ic("logout")} Logga ut</button>`;
   m.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=> profileAction(b.getAttribute("data-act")));
   m.querySelectorAll("[data-bookas]").forEach(b=> b.onclick = ()=>{
@@ -1347,7 +1357,7 @@ async function profileAction(act){
   if(act==="newstable"){ createOrgDialog(); return; }
   if(act==="invite"){ inviteDialog(); return; }
   if(act==="chmail"){ changeEmailDialog(); return; }
-  if(act==="viewas"){ viewAsDialog(); return; }
+  if(act==="viewas"){ if(await refreshAdminFlag()) viewAsDialog(); return; }
   if(act==="logout"){
     if(!(await confirmDialog("Vill du logga ut? Du behöver en ny inloggningslänk via mejl för att logga in igen.", { title:"Logga ut", okText:"Ja, logga ut", primary:true }))) return;
     await db.auth.signOut(); view = { name:"home", stableId:null }; return;
@@ -4094,5 +4104,5 @@ async function loadRotationHints(g, dISO){
 
 /* ============ Start ============ */
 function setSessionFrom(s){ session = s ? { id: s.user.id, email: normEmail(s.user.email) } : null; }
-db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session){ applyEmailChange(); refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
-db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session){ applyEmailChange(); refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
+db.auth.onAuthStateChange((_event, s)=>{ setSessionFrom(s); render(); if(session){ applyEmailChange(); refreshAdminFlag(); refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
+db.auth.getSession().then(({ data })=>{ setSessionFrom(data.session); render(); if(session){ applyEmailChange(); refreshAdminFlag(); refreshMyProfiles().then(refreshBellCount); handlePendingCreate(); } });
