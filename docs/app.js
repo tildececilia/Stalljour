@@ -1108,6 +1108,10 @@ function scheduleCell(p, d, dISO, map, myIds, tISO){
 
 async function bookCell(passId, dISO){
   const pid = schedCtx.actingProfileId; if(!pid) return;
+  const pass = schedCtx.passes.find(x=>x.id===passId);
+  const d = new Date(dISO + "T00:00:00");
+  const label = `${(pass && pass.name) || "passet"}, ${DAY_NAMES[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth()+1}`;
+  let asked = false;
   // Är det min grupps jourvecka? Annars: fråga innan bokning.
   const duty = dutyGroupForWeek(weekStart2, schedCtx.groups, schedCtx.stable.rotation_offset);
   if(duty){
@@ -1115,12 +1119,19 @@ async function bookCell(passId, dISO){
     const myGroups = new Set(((prof && prof.horse) || []).map(h=> h.group_id).filter(Boolean));
     if(!myGroups.has(duty.id)){
       const ok = await confirmDialog(
-        `Det är inte din grupp som har jouren den här veckan — vecka ${isoWeekNumber(weekStart2)} är det ${duty.name}. Vill du boka ändå?`,
-        { title: "Inte din jourvecka", okText: "Ja, ta pass", primary: true });
+        `Det är inte din grupp som har jouren den här veckan — vecka ${isoWeekNumber(weekStart2)} är det ${duty.name}. Vill du ta passet ${label} ändå?`,
+        { title: "Inte din jourvecka", okText: "Ja, ta passet", primary: true });
       if(!ok) return;
+      asked = true;   // en fråga räcker
     }
   }
-  const pass = schedCtx.passes.find(x=>x.id===passId); const cap = pass ? (pass.capacity||1) : 1;
+  if(!asked){
+    const who = (schedCtx.myProfiles||[]).length > 1
+      ? ` som ${((schedCtx.profiles||[]).find(x=> x.id === pid)||{}).name || ""}` : "";
+    const ok = await confirmDialog(`Vill du ta passet ${label}${who}?`, { title: "Ta pass", okText: "Ja, ta passet", primary: true });
+    if(!ok) return;
+  }
+  const cap = pass ? (pass.capacity||1) : 1;
   const cur = await db.from("booking").select("id").eq("pass_id", passId).eq("pass_date", dISO);
   if(!cur.error && cur.data.length >= cap){ await drawGrid(); return; }
   const r = await db.from("booking").insert({ stable_id: schedCtx.stable.id, pass_id: passId, pass_date: dISO, profile_id: pid, booked_by: session.id });
